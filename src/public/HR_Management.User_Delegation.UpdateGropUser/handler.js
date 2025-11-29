@@ -317,10 +317,76 @@ const eventHandlers = {
               .map((s) => s.trim())
               .filter(Boolean);
 
-            // Siapkan operasi DELETE
-            for (const g of beforeList) {
+            console.log(`📋 Before: ${beforeList.join(", ")}`);
+            console.log(`📋 After: ${afterList.join(", ")}`);
+
+            // ==================== PERBAIKAN LOGIKA ====================
+            // Tentukan tipe aksi berdasarkan perbandingan before_ dan after_
+            let actionType = "move"; // default
+            let groupsToAdd = [];
+            let groupsToRemove = [];
+
+            // Deteksi tipe aksi
+            if (beforeList.length > 0 && afterList.length > beforeList.length) {
+              // Jika after lebih banyak dari before, kemungkinan ADD
+              // Cek apakah semua item di before ada di after
+              const allBeforeInAfter = beforeList.every((g) =>
+                afterList.includes(g)
+              );
+
+              if (allBeforeInAfter) {
+                // Ini adalah ADD action
+                actionType = "add";
+                groupsToAdd = afterList.filter((g) => !beforeList.includes(g));
+                groupsToRemove = [];
+                console.log(`🔵 Detected action: ADD`);
+              } else {
+                // Ini adalah MOVE action (ada perubahan group)
+                actionType = "move";
+                groupsToRemove = beforeList.filter(
+                  (g) => !afterList.includes(g)
+                );
+                groupsToAdd = afterList.filter((g) => !beforeList.includes(g));
+                console.log(`🔵 Detected action: MOVE`);
+              }
+            } else if (beforeList.length > afterList.length) {
+              // Jika before lebih banyak dari after, ini adalah REMOVE
+              actionType = "remove";
+              groupsToRemove = beforeList.filter((g) => !afterList.includes(g));
+              groupsToAdd = [];
+              console.log(`🔵 Detected action: REMOVE`);
+            } else if (beforeList.length === afterList.length) {
+              // Jika jumlah sama, cek apakah ada perbedaan
+              const isDifferent =
+                beforeList.some((g) => !afterList.includes(g)) ||
+                afterList.some((g) => !beforeList.includes(g));
+
+              if (isDifferent) {
+                // Ada perbedaan = MOVE
+                actionType = "move";
+                groupsToRemove = beforeList.filter(
+                  (g) => !afterList.includes(g)
+                );
+                groupsToAdd = afterList.filter((g) => !beforeList.includes(g));
+                console.log(`🔵 Detected action: MOVE`);
+              } else {
+                // Tidak ada perubahan
+                actionType = "no-change";
+                console.log(`🔵 No changes detected`);
+              }
+            }
+
+            console.log(
+              `➕ Groups to ADD: ${groupsToAdd.join(", ") || "none"}`
+            );
+            console.log(
+              `🗑️ Groups to REMOVE: ${groupsToRemove.join(", ") || "none"}`
+            );
+
+            // Siapkan operasi DELETE (hanya untuk yang perlu dihapus)
+            for (const g of groupsToRemove) {
               if (g === "PKL" || g === "mirorim") {
-                console.log(`⏭️ Skipping PKL removal for ${g}`);
+                console.log(`⏭️ Skipping PKL/mirorim removal for ${g}`);
                 continue;
               }
               if (currentGroupNames.includes(g)) {
@@ -333,8 +399,8 @@ const eventHandlers = {
               }
             }
 
-            // Siapkan operasi POST
-            for (const g of afterList) {
+            // Siapkan operasi POST (hanya untuk yang perlu ditambah dan belum ada)
+            for (const g of groupsToAdd) {
               if (!currentGroupNames.includes(g)) {
                 ldapOperations.push({
                   type: "post",
@@ -342,6 +408,8 @@ const eventHandlers = {
                   group: g,
                   userDN: userDN,
                 });
+              } else {
+                console.log(`ℹ️ User sudah berada di group ${g} (skip POST)`);
               }
             }
 
@@ -349,18 +417,22 @@ const eventHandlers = {
             const actionObj = {
               user: String(apr.user),
               status: "approve",
+              action: actionType,
             };
 
-            if (afterList.length > 0 && beforeList.length > 0) {
-              actionObj.action = "move";
+            // Set before dan after berdasarkan tipe aksi
+            if (actionType === "add") {
+              // ADD: before = group awal, after = group final (awal + baru)
               actionObj.before = beforeList.join(", ");
               actionObj.after = afterList.join(", ");
-            } else if (afterList.length > 0) {
-              actionObj.groupAdd = afterList.join(", ");
-              actionObj.groupRemove = "";
-            } else if (beforeList.length > 0) {
-              actionObj.groupAdd = "";
-              actionObj.groupRemove = beforeList.join(", ");
+            } else if (actionType === "remove") {
+              // REMOVE: before = group awal, after = group final (awal - dihapus)
+              actionObj.before = beforeList.join(", ");
+              actionObj.after = afterList.join(", ");
+            } else if (actionType === "move") {
+              // MOVE: before = group awal, after = group final (berbeda)
+              actionObj.before = beforeList.join(", ");
+              actionObj.after = afterList.join(", ");
             }
 
             actionArray.push(actionObj);
@@ -381,23 +453,47 @@ const eventHandlers = {
               .map((s) => s.trim())
               .filter(Boolean);
 
+            console.log(`📋 Before: ${beforeList.join(", ")}`);
+            console.log(`📋 After: ${afterList.join(", ")}`);
+
+            // Tentukan tipe aksi (sama seperti approve, tapi tidak eksekusi LDAP)
+            let actionType = "move"; // default
+
+            if (beforeList.length > 0 && afterList.length > beforeList.length) {
+              const allBeforeInAfter = beforeList.every((g) =>
+                afterList.includes(g)
+              );
+              if (allBeforeInAfter) {
+                actionType = "add";
+                console.log(`🔵 Detected action: ADD (rejected)`);
+              } else {
+                actionType = "move";
+                console.log(`🔵 Detected action: MOVE (rejected)`);
+              }
+            } else if (beforeList.length > afterList.length) {
+              actionType = "remove";
+              console.log(`🔵 Detected action: REMOVE (rejected)`);
+            } else if (beforeList.length === afterList.length) {
+              const isDifferent =
+                beforeList.some((g) => !afterList.includes(g)) ||
+                afterList.some((g) => !beforeList.includes(g));
+              if (isDifferent) {
+                actionType = "move";
+                console.log(`🔵 Detected action: MOVE (rejected)`);
+              } else {
+                actionType = "no-change";
+                console.log(`🔵 No changes detected (rejected)`);
+              }
+            }
+
             // Build action object untuk reject
             const actionObj = {
               user: String(apr.user),
               status: "reject",
+              action: actionType,
+              before: beforeList.join(", "),
+              after: afterList.join(", "),
             };
-
-            if (afterList.length > 0 && beforeList.length > 0) {
-              actionObj.action = "move";
-              actionObj.before = beforeList.join(", ");
-              actionObj.after = afterList.join(", ");
-            } else if (afterList.length > 0) {
-              actionObj.groupAdd = afterList.join(", ");
-              actionObj.groupRemove = "";
-            } else if (beforeList.length > 0) {
-              actionObj.groupAdd = "";
-              actionObj.groupRemove = beforeList.join(", ");
-            }
 
             actionArray.push(actionObj);
           }
