@@ -1,0 +1,292 @@
+{
+    "display": "form",
+    "components": [
+        {
+            "key": "proc_inst_id",
+            "type": "textfield",
+            "input": true,
+            "label": "Instance ID",
+            "table": "mo_retur_receive",
+            "hidden": true,
+            "tableView": true,
+            "applyMaskOn": "change",
+            "clearOnHide": false,
+            "validateWhenHidden": false
+        },
+        {
+            "key": "resi_retur",
+            "type": "textfield",
+            "input": true,
+            "label": "Resi Retur",
+            "table": "mo_retur_receive",
+            "disabled": true,
+            "tableView": true,
+            "applyMaskOn": "change",
+            "clearOnHide": false,
+            "validateWhenHidden": false
+        },
+        {
+            "key": "courier",
+            "type": "textfield",
+            "input": true,
+            "label": "Kurir",
+            "table": "mo_retur_receive",
+            "disabled": true,
+            "tableView": true,
+            "applyMaskOn": "change",
+            "clearOnHide": false,
+            "validateWhenHidden": false
+        },
+        {
+            "key": "courier_name",
+            "type": "textfield",
+            "input": true,
+            "label": "Nama Kurir Pengantar",
+            "table": "mo_retur_receive",
+            "disabled": true,
+            "tableView": true,
+            "applyMaskOn": "change",
+            "clearOnHide": false,
+            "validateWhenHidden": false
+        },
+        {
+            "key": "unboxed_date",
+            "type": "datetime",
+            "input": true,
+            "label": "Retur Date",
+            "widget": {
+                "mode": "single",
+                "type": "calendar",
+                "format": "yyyy-MM-dd hh:mm a",
+                "locale": "en",
+                "maxDate": null,
+                "minDate": null,
+                "timezone": "Asia/Jakarta",
+                "time_24hr": false,
+                "allowInput": true,
+                "enableTime": true,
+                "noCalendar": false,
+                "hourIncrement": 1,
+                "minuteIncrement": 1,
+                "displayInTimezone": "location",
+                "useLocaleSettings": false
+            },
+            "disabled": true,
+            "timezone": "Asia/Jakarta",
+            "tableView": true,
+            "persistent": false,
+            "applyMaskOn": "change",
+            "clearOnHide": false,
+            "calculateValue": "value = new Date(new Date().getTime() + 7 * 60 * 60 * 1000).toISOString().replace('T', ' ').split('.')[0]",
+            "displayInTimezone": "location",
+            "validateWhenHidden": false
+        },
+         {
+            "key": "click",
+            "type": "button",
+            "event": "click",
+            "input": true,
+            "label": "Get Qr Code",
+            "action": "event",
+            "tableView": false,
+            "actionType": "uiInstruction",
+            "customType": "modalQRComponent",
+            "affects": ["invoice","notes_on_duty"],
+            "customClass": "ml-auto mt-2",
+            "saveOnEnter": false,
+            "showValidations": false
+        },
+        {
+            "key": "invoice",
+            "case": "uppercase",
+            "type": "textfield",
+            "input": true,
+            "label": "Invoice",
+            "table": "mo_retur_receive",
+            "widget": "choicesjs",
+            "onChange": {
+                "refreshField": "products"
+            },
+            "tableView": true,
+            "conditional": {
+                "eq": "not match",
+                "show": false,
+                "when": "resi_match"
+            },
+            "validateWhenHidden": false
+        },
+        {
+            "key": "clickProducts",
+            "type": "button",
+            "event": "click",
+            "input": true,
+            "label": "Get Products",
+            "action": "event",
+            "tableView": false,
+            "actionType": "updateComponent",
+            "affects": ["products"],
+            "customClass": "ml-auto mt-2",
+            "saveOnEnter": false,
+            "showValidations": false
+        },
+        {
+            "key": "notes_on_duty",
+            "type": "textfield",
+            "input": true,
+            "label": "Notes",
+            "table": "mo_retur_receive",
+            "tableView": true,
+            "applyMaskOn": "change",
+            "clearOnHide": false,
+            "validateWhenHidden": false
+        },
+        {
+            "key": "products",
+            "type": "datagrid",
+            "dependsOn": "invoice",
+            "input": true,
+            "label": "List Product",
+            "source": "invoice",
+            "removeRow": false,
+            "tableView": false,
+            "addAnother": false,
+            "components": [
+                {
+                    "key": "image_preview",
+                    "html": "<div style='text-align:center;'><img class='zoom-image' src='https://mirorim.ddns.net:8111{{ row.image }}' alt='Gambar Produk' style='max-width:100px; height:auto;'/></div>",
+                    "type": "content",
+                    "input": false,
+                    "label": "Gambar Produk",
+                    "tableView": false
+                },
+                {
+                    "key": "image",
+                    "type": "textfield",
+                    "input": true,
+                    "label": "URL Gambar",
+                    "hidden": true,
+                    "apiSource": {
+                        "link": "https://mirorim.ddns.net:8111",
+                        "source": "imageFromPk",
+                        "valueKey": "image"
+                    },
+                    "tableView": false
+                },
+                {
+                    "key": "part_pk",
+                    "type": "number",
+                    "input": true,
+                    "label": "Instance ID",
+                    "table": "mo_order_shop",
+                    "hidden": true,
+                    "tableView": true,
+                    "applyMaskOn": "change",
+                    "clearOnHide": false,
+                    "validateWhenHidden": false
+                },
+                {
+                    "key": "product_name",
+                    "type": "textarea",
+                    "input": false,
+                    "label": "Nama Product",
+                    "table": "mo_order_shop",
+                    "disabled": true,
+                    "tableView": true,
+                    "persistent": false,
+                    "validateWhenHidden": false
+                },
+                {
+                    "key": "sku_toko",
+                    "type": "textfield",
+                    "input": false,
+                    "label": "SKU TOKO",
+                    "table": "mo_order_shop",
+                    "disabled": true,
+                    "tableView": true,
+                    "persistent": false,
+                    "validateWhenHidden": false
+                },
+                {
+                    "key": "quantity_convert",
+                    "type": "textfield",
+                    "input": false,
+                    "label": "Quantity Order",
+                    "table": "mo_order_shop",
+                    "disabled": true,
+                    "tableView": true,
+                    "persistent": false,
+                    "applyMaskOn": "change",
+                    "clearOnHide": false,
+                    "validateWhenHidden": false
+                }
+            ]
+        },
+        {
+            "key": "resi_match",
+            "data": {
+                "values": [
+                    {
+                        "label": "Search Invoice",
+                        "value": true
+                    },
+                    {
+                        "label": "Iya Invoice Kita",
+                        "value": "match"
+                    },
+                    {
+                        "label": "Reject, Bukan Invoice Kita",
+                        "value": "not match"
+                    }
+                ]
+            },
+            "type": "select",
+            "input": true,
+            "label": "Resi sesuai dengan Invoice kita?",
+            "widget": "choicesjs",
+            "tableView": true,
+            "validateWhenHidden": false
+        },
+        {
+            "key": "barang_match",
+            "data": {
+                "values": [
+                    {
+                        "label": "Teknisi, Perlu QC Barang",
+                        "value": "match check"
+                    },
+                    {
+                        "label": "On Duty, Langsung Input Barang",
+                        "value": "match"
+                    },
+                    {
+                        "label": "Admin MP, Follow Up ke MP karena barang bermasalah atau barang tidak sama",
+                        "value": "mismatch"
+                    }
+                ]
+            },
+            "type": "select",
+            "input": true,
+            "label": "Invoice Perlu Diteruskan kemana?",
+            "widget": "choicesjs",
+            "tableView": true,
+            "conditional": {
+                "eq": "match",
+                "show": true,
+                "when": "resi_match"
+            },
+            "validateWhenHidden": false
+        },
+        {
+            "key": "submit",
+            "type": "button",
+            "event": "submit",
+            "input": true,
+            "label": "Submit",
+            "action": "event",
+            "tableView": false,
+            "customClass": "ml-auto mt-2",
+            "saveOnEnter": false,
+            "showValidations": false
+        }
+    ]
+}

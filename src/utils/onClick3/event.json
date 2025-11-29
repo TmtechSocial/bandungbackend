@@ -1,0 +1,42 @@
+{
+    "onRender": {
+        "graph": {
+            "method": "query",
+            "endpoint": "http://192.168.1.139:9000/v1/graphql",
+            "gqlQuery": "query MyQuery($proc_inst_id: [String!]) { mo_retur_receive(where: {proc_inst_id: {_in: $proc_inst_id}}) { proc_inst_id notes_on_duty resi_retur invoice retur_date courier courier_name } }",
+            "variables": {
+                "proc_inst_id": "${instance}"
+            }
+        },
+        "query": "",
+        "endpoint": "/dynamicQuery/data"
+    },
+    "onSubmit": {
+        "method": "POST",
+        "endpoint": "http://localhost:5000/dynamicSubmit"
+    },
+    "onClick": {
+        "method": "POST",
+        "endpoint": "http://localhost:5000/dynamicClick",
+        "api": {
+            "imageFromPk": {
+                "url": "http:/36.50.112.247:8004/api/part/:id/",
+                "path": {
+                    "id": "${graph.mo_order_shop.part_pk}"
+                },
+                "method": "GET",
+                "headers": {
+                    "Authorization": "Basic YWRtaW46YWRtaW4="
+                }
+            }
+        },
+        "graph": {
+            "method": "query",
+            "endpoint": "http://192.168.1.139:9000/v1/graphql",
+            "gqlQuery": "query MyQuery($invoice: String!) { mo_order_shop(where: {invoice: {_eq: $invoice}}) { part_pk product_name sku_toko quantity_convert }}",
+            "variables": {
+                "invoice": "${invoice}"
+            }
+        }
+    }
+}

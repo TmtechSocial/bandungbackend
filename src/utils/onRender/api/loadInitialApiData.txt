@@ -1,0 +1,485 @@
+/**
+ * API data loading utility - OPTIMIZED VERSION
+ * Handles loading initial API data with dynamic param resolution and parallel processing
+ * Now supports processing multiple array elements with better performance
+ */
+const fetchApiData = require("./fetchApiData");
+const updateComponent = require("../process/updateComponent");
+
+/**
+ * Helper function to extract all values from an array template path
+ * @param {Object} data - The processed query data
+ * @param {String} template - Template string like "${graph.mo_order_shop.part_pk}"
+ * @returns {Array} Array of values extracted from the template path
+ */
+function extractArrayValues(data, template) {
+  const path = template.replace(/\$\{|\}/g, '');
+  const pathParts = path.split('.');
+  let currentData = data;
+  if (Array.isArray(currentData)) currentData = currentData[0];
+  for (let i = 0; i < pathParts.length; i++) {
+    if (!currentData) return [];
+    if (Array.isArray(currentData)) {
+      // Map ke semua item di array
+      currentData = currentData.flatMap(item => item[pathParts[i]]);
+    } else {
+      currentData = currentData[pathParts[i]];
+    }
+  }
+  // currentData bisa array atau single value
+  if (Array.isArray(currentData)) return currentData.filter(Boolean);
+  if (currentData !== undefined && currentData !== null) return [currentData];
+  return [];
+}
+
+/**
+ * Helper function to safely get nested values from an object
+ * @param {Object} obj - The object to traverse
+ * @param {String} path - Path to the desired value (e.g. "graph.mo_refill.product_key")
+ * @param {Number} index - Optional index for array access
+ * @returns {*} The value at the specified path or empty string if not found
+ */
+function getValueByPath(obj, path, index = null) {
+  // Handle nested arrays and objects
+  // Expecting data like [{"graph":{"mo_refill":[{...}]}}]
+  
+  // If obj is an array and we're not explicitly accessing an index, use the first element
+  if (Array.isArray(obj) && !path.startsWith('[')) {
+    obj = obj[0];
+  }
+  
+  // Handle array notation in path (e.g., "graph.mo_refill[0].product_key")
+  const normalizedPath = path.replace(/\[(\d+)\]/g, '.$1');
+  const keys = normalizedPath.split('.');
+  let result = obj;
+  let foundTargetArray = false;
+  let targetArrayIndex = null;
+  
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (!result) return '';
+    
+    // If we encounter an array during traversal
+    if (Array.isArray(result[key])) {
+      // Check if there are more keys after this (meaning we need to access properties of array elements)
+      if (i < keys.length - 1) {
+        // This array contains objects with properties we need to access
+        if (index !== null) {
+          // Use the provided index
+          result = result[key][index];
+          foundTargetArray = true;
+          targetArrayIndex = index;
+        } else {
+          // Default to first element if no index provided
+          result = result[key][0];
+        }
+      } else {
+        // This is the final array in the path
+        if (index !== null && result[key][index] !== undefined) {
+          result = result[key][index];
+        } else {
+          // Return the entire array for further processing
+          result = result[key];
+        }
+      }
+    } else {
+      result = result[key];
+    }
+  }
+  
+  return result !== undefined ? result : '';
+}
+
+/**
+ * Resolves template strings in the format ${expression} with values from data
+ * @param {String} str - The template string to resolve
+ * @param {Object} data - The data object containing values
+ * @param {Number} index - Optional index for array access
+ * @returns {String} Resolved string with all placeholders replaced
+ */
+function resolveTemplate(str, data, index = null) {
+  const result = str.replace(/\$\{([^}]+)\}/g, (_, expr) => {
+    try {
+      const value = getValueByPath(data, expr, index);
+      return value;
+    } catch (e) {
+      console.error("Template parsing error for:", expr, e);
+      return "";
+    }
+  });
+
+  return result;
+}
+
+/**
+ * Checks if a path references an array that should be processed multiple times
+ * @param {Object} data - The data object
+ * @param {String} template - The template string to check
+ * @returns {Array|null} Array of data if template references an array, null otherwise
+ */
+function getArrayFromTemplate(data, template) {
+  // Extract all template expressions
+  const expressions = template.match(/\$\{([^}]+)\}/g);
+  if (!expressions) return null;
+  
+  // Check if any expression references an array
+  for (const expr of expressions) {
+    const path = expr.replace(/\$\{|\}/g, '');
+    //console.log(`Checking path "${path}" for arrays`);
+    
+    // Split path and traverse to find arrays
+    const pathParts = path.split('.');
+    let currentData = data;
+    
+    // If data is an array, use the first element
+    if (Array.isArray(currentData)) {
+      currentData = currentData[0];
+    }
+    
+    // Traverse each part of the path
+    for (let i = 0; i < pathParts.length; i++) {
+      const part = pathParts[i];
+      
+      if (currentData && currentData[part] !== undefined) {
+        currentData = currentData[part];
+        
+        // If we found an array and there are more path parts after it
+        if (Array.isArray(currentData) && i < pathParts.length - 1) {
+          //console.log(`Found array at "${pathParts.slice(0, i + 1).join('.')}" with ${currentData.length} elements`);
+          return currentData;
+        }
+      } else {
+        break;
+      }
+    }
+    
+    // Also check if the complete path resolves to an array
+    if (Array.isArray(currentData)) {
+      //console.log(`Complete path "${path}" resolves to array with ${currentData.length} elements`);
+      return currentData;
+    }
+  }
+  
+  //console.log(`No arrays found in template "${template}"`);
+  return null;
+}
+
+/**
+ * Resolves dynamic values in API configurations
+ * @param {Object} apiConfigs - The API configuration objects
+ * @param {Object} processedQueryData - Processed query data
+ * @returns {Object} Resolved API configurations (may contain arrays of configs)
+ */
+function resolveApiConfigs(apiConfigs, processedQueryData) {
+  const resolvedConfigs = {};
+  for (const [key, config] of Object.entries(apiConfigs)) {
+    // Check for "in" parameter - special handling for bulk API calls
+    if (config.in) {
+      console.log(`[resolveApiConfigs] Found "in" parameter for ${key}:`, config.in);
+      
+      const resolvedConfig = { ...config };
+      
+      // Resolve URL (no array processing needed for "in" parameter)
+      if (typeof resolvedConfig.url === "string") {
+        resolvedConfig.url = resolveTemplate(resolvedConfig.url, processedQueryData);
+      }
+      
+      // Resolve "in" parameters - collect all values into comma-separated string
+      const inParams = {};
+      for (const [paramKey, paramTemplate] of Object.entries(config.in)) {
+        if (typeof paramTemplate === "string") {
+          // Extract all values from the template path
+          const values = extractArrayValues(processedQueryData, paramTemplate);
+          
+          if (values.length > 0) {
+            // Create comma-separated string
+            inParams[paramKey] = values.join(',');
+            console.log(`[resolveApiConfigs] ${key}.${paramKey}: ${values.length} values -> "${inParams[paramKey]}"`);
+          } else {
+            // Fallback to single value resolution
+            inParams[paramKey] = resolveTemplate(paramTemplate, processedQueryData);
+            console.log(`[resolveApiConfigs] ${key}.${paramKey}: fallback single value -> "${inParams[paramKey]}"`);
+          }
+        }
+      }
+      
+      resolvedConfig.params = { ...resolvedConfig.params, ...inParams };
+      delete resolvedConfig.in; // Remove "in" after processing
+      
+      resolvedConfigs[key] = resolvedConfig;
+      continue;
+    }
+
+    // Check if any template in the config references an array (for individual calls)
+    let arrayData = null;
+    let hasArrayTemplate = false;
+    let arrayTemplateKey = null;
+    let arrayTemplateVal = null;
+
+    // Check path for array templates (prioritize path for RESTful)
+    if (config.path) {
+      for (const [paramKey, paramVal] of Object.entries(config.path)) {
+        if (typeof paramVal === "string") {
+          const values = extractArrayValues(processedQueryData, paramVal);
+          if (values.length > 1) {
+            arrayData = values;
+            hasArrayTemplate = true;
+            arrayTemplateKey = paramKey;
+            arrayTemplateVal = paramVal;
+            break;
+          }
+        }
+      }
+    }
+    // Fallback: Check URL for array templates
+    if (!hasArrayTemplate && typeof config.url === "string") {
+      const values = extractArrayValues(processedQueryData, config.url);
+      if (values.length > 1) {
+        arrayData = values;
+        hasArrayTemplate = true;
+        arrayTemplateKey = null;
+        arrayTemplateVal = config.url;
+      }
+    }
+    // Fallback: Check params for array templates
+    if (!hasArrayTemplate && config.params) {
+      for (const [paramKey, paramVal] of Object.entries(config.params)) {
+        if (typeof paramVal === "string") {
+          const values = extractArrayValues(processedQueryData, paramVal);
+          if (values.length > 1) {
+            arrayData = values;
+            hasArrayTemplate = true;
+            arrayTemplateKey = paramKey;
+            arrayTemplateVal = paramVal;
+            break;
+          }
+        }
+      }
+    }
+
+    if (hasArrayTemplate && arrayData) {
+      // Create array of configurations for each array element/value
+      const configArray = arrayData.map((val, i) => {
+        const arrayResolvedConfig = { ...config };
+        // Resolve URL with value
+        if (typeof arrayResolvedConfig.url === "string") {
+          arrayResolvedConfig.url = arrayTemplateKey === null
+            ? resolveTemplate(arrayResolvedConfig.url, processedQueryData, i)
+            : arrayResolvedConfig.url;
+        }
+        // Resolve path with value
+        if (arrayResolvedConfig.path && arrayTemplateKey) {
+          arrayResolvedConfig.path = { ...arrayResolvedConfig.path };
+          arrayResolvedConfig.path[arrayTemplateKey] = val;
+        } else if (arrayResolvedConfig.path) {
+          arrayResolvedConfig.path = Object.fromEntries(
+            Object.entries(arrayResolvedConfig.path).map(([paramKey, paramVal]) => [
+              paramKey,
+              typeof paramVal === "string" ? resolveTemplate(paramVal, processedQueryData, i) : paramVal,
+            ])
+          );
+        }
+        // Resolve params with value
+        if (arrayResolvedConfig.params && arrayTemplateKey) {
+          arrayResolvedConfig.params = { ...arrayResolvedConfig.params };
+          arrayResolvedConfig.params[arrayTemplateKey] = val;
+        } else if (arrayResolvedConfig.params) {
+          arrayResolvedConfig.params = Object.fromEntries(
+            Object.entries(arrayResolvedConfig.params).map(([paramKey, paramVal]) => [
+              paramKey,
+              typeof paramVal === "string" ? resolveTemplate(paramVal, processedQueryData, i) : paramVal,
+            ])
+          );
+        }
+        return arrayResolvedConfig;
+      });
+      resolvedConfigs[key] = configArray;
+    } else {
+      // Single configuration (no arrays)
+      const resolvedConfig = { ...config };
+      if (typeof resolvedConfig.url === "string") {
+        resolvedConfig.url = resolveTemplate(resolvedConfig.url, processedQueryData);
+      }
+      if (resolvedConfig.path) {
+        resolvedConfig.path = Object.fromEntries(
+          Object.entries(resolvedConfig.path).map(([paramKey, paramVal]) => [
+            paramKey,
+            typeof paramVal === "string" ? resolveTemplate(paramVal, processedQueryData) : paramVal,
+          ])
+        );
+      }
+      if (resolvedConfig.params) {
+        resolvedConfig.params = Object.fromEntries(
+          Object.entries(resolvedConfig.params).map(([paramKey, paramVal]) => [
+            paramKey,
+            typeof paramVal === "string" ? resolveTemplate(paramVal, processedQueryData) : paramVal,
+          ])
+        );
+      }
+      resolvedConfigs[key] = resolvedConfig;
+    }
+  }
+  return resolvedConfigs;
+}
+
+/**
+ * Main function to load initial API data
+ * @param {Object} apiConfigs - API configurations
+ * @param {Object} schema - Schema definition
+ * @param {Object} processedQueryData - Processed query data
+ * @param {Object} formState - Form state object
+ * @param {Object} session - Session object
+ * @returns {void}
+ */
+async function loadInitialApiData(apiConfigs, schema, processedQueryData, formState, session) {
+  const startTime = Date.now();
+  console.log("Starting loadInitialApiData...");
+  
+  if (!apiConfigs) return;
+
+  // Resolve template strings in apiConfigs
+  const resolvedConfigs = resolveApiConfigs(apiConfigs, processedQueryData);
+
+  // Optimization: Separate dependent and non-dependent APIs
+  const nonDependentApis = [];
+  const dependentApis = [];
+
+  for (const [key, config] of Object.entries(resolvedConfigs)) {
+    const isDependent = schema.components.some(
+      (comp) => comp.apiSource?.source === key && comp.apiSource?.dependsOn
+    );
+    
+    if (isDependent) {
+      dependentApis.push({ key, config });
+    } else {
+      nonDependentApis.push({ key, config });
+    }
+  }
+
+  console.log(`Found ${nonDependentApis.length} non-dependent APIs and ${dependentApis.length} dependent APIs`);
+
+  // Optimization: Load all non-dependent APIs in parallel
+  const nonDependentPromises = nonDependentApis.map(async ({ key, config }) => {
+    try {
+      if (Array.isArray(config)) {
+        // Handle array of configurations - run in parallel
+        const results = await Promise.all(
+          config.map(singleConfig => fetchApiData(singleConfig, {}, formState.data))
+        );
+        
+       const validResults = results.filter(result => result !== null);
+         if (validResults.length > 0) {
+          // Add dummy index key to each item in each result array for bulk calls
+          validResults.forEach((resultArray, idx) => {
+            if (Array.isArray(resultArray)) {
+              resultArray.forEach((item, itemIdx) => {
+                if (item && typeof item === 'object') {
+                  item._dummyIndex = itemIdx;
+                }
+             });
+           }
+         });
+           formState.apiResults[key] = validResults;
+         }
+         
+         return { key, success: true, count: validResults.length };
+      } else {
+        // Handle single configuration
+        const result = await fetchApiData(config, {}, formState.data);
+        if (result) {
+          formState.apiResults[key] = result;
+          return { key, success: true, count: 1 };
+        }
+        return { key, success: false, count: 0 };
+      }
+    } catch (error) {
+      console.error(`Error loading API ${key}:`, error.message);
+      return { key, success: false, error: error.message };
+    }
+  });
+
+  // Wait for all non-dependent APIs to complete
+  const nonDependentResults = await Promise.all(nonDependentPromises);
+  const successfulCount = nonDependentResults.filter(r => r.success).length;
+  
+  console.log(`[loadInitialApiData] Loaded ${successfulCount}/${nonDependentApis.length} non-dependent APIs in ${Date.now() - startTime}ms`);
+  
+  // Log detailed results for each API
+  nonDependentResults.forEach(result => {
+    if (result.success) {
+      const apiData = formState.apiResults[result.key];
+      console.log(`[loadInitialApiData] API [${result.key}]: SUCCESS - ${Array.isArray(apiData) ? `Array(${apiData.length})` : typeof apiData}`);
+      if (Array.isArray(apiData) && apiData.length > 0) {
+        console.log(`[loadInitialApiData] API [${result.key}] sample fields:`, Object.keys(apiData[0]));
+      }
+    } else {
+      console.log(`[loadInitialApiData] API [${result.key}]: FAILED - ${result.error || 'Unknown error'}`);
+    }
+  });
+
+  // Load dependent APIs (these must be sequential due to dependencies)
+  console.log("Loading dependent APIs...");
+  for (const [dependsOnKey, fieldKeys] of formState.dependencies.entries()) {
+    const value = formState.data[dependsOnKey];
+    if (!value) continue;
+    
+    for (const fieldKey of fieldKeys) {
+      const component = schema.components.find((c) => c.key === fieldKey);
+      const apiKey = component?.apiSource?.source;
+      const config = resolvedConfigs[apiKey];
+      
+      if (config) {
+        try {
+          if (Array.isArray(config)) {
+            // Handle array of configurations - run in parallel
+            const results = await Promise.all(
+              config.map(singleConfig => 
+                fetchApiData(singleConfig, { [dependsOnKey]: value }, formState.data)
+              )
+            );
+            
+            const validResults = results.filter(result => result !== null);
+            if (validResults.length > 0) {
+              formState.apiResults[apiKey] = validResults;
+              updateComponent(component, validResults);
+            }
+          } else {
+            // Handle single configuration
+            const result = await fetchApiData(config, { [dependsOnKey]: value }, formState.data);
+            if (result) {
+              formState.apiResults[apiKey] = result;
+              updateComponent(component, result);
+            }
+          }
+        } catch (error) {
+          console.error(`Error loading dependent API ${apiKey}:`, error.message);
+        }
+      }
+    }
+  }
+
+  const totalTime = Date.now() - startTime;
+  console.log(`[loadInitialApiData] Completed in ${totalTime}ms`);
+  
+  if (formState && formState.apiResults) {
+    const apiKeys = Object.keys(formState.apiResults);
+    console.log(`[loadInitialApiData] Final API results summary:`, apiKeys.length, 'APIs loaded');
+    
+    apiKeys.forEach(key => {
+      const data = formState.apiResults[key];
+      if (Array.isArray(data)) {
+        console.log(`[loadInitialApiData] Final API [${key}]: Array(${data.length}) items`);
+        if (data.length > 0 && data[0].pk) {
+          const pkValues = data.map(item => item.pk).slice(0, 5);
+          console.log(`[loadInitialApiData] Final API [${key}] sample PKs:`, pkValues, data.length > 5 ? `...and ${data.length - 5} more` : '');
+        }
+      } else {
+        console.log(`[loadInitialApiData] Final API [${key}]:`, typeof data);
+      }
+    });
+  } else {
+    console.warn('[loadInitialApiData] No API results available after processing!');
+  }
+}
+
+module.exports = loadInitialApiData;

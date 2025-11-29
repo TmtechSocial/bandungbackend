@@ -1,0 +1,747 @@
+const {
+  cmisConfigList,
+  cmisConfigView,
+  cmisConfigUpload,
+} = require("../controller/cmisConfig");
+const {
+  configureProcess,
+  configureQuery,
+  configureHandler,
+} = require("../controller/controllerConfig");
+const { claimTask, unclaimTask } = require("../utils/camunda/camundaClaim");
+const { checkQRInstance } = require("../controller/controllerQR");
+const { checkQRInternal } = require("../controller/controllerQRInternal");
+// const { generateBarcode } = require("../controller/controllerGenerateQR");
+const { generateQR } = require("../controller/controllerGenerateQR");
+const { getDynamicHome } = require("../controller/controllerHome");
+const dynamicRender = require("../utils/onRender/handleRender");
+const { CmisSession } = require("cmis");
+const uploadConfig = require("../utils/uploads/uploadConfig");
+const CMIS_SECRET_URL = process.env.CMIS_SECRET_URL;
+const { getUsers } = require("../utils/ldap/ldapList");
+const { fetchAllReport } = require("../utils/camunda/camundaReport");
+const { fetchAllTasks } = require("../utils/camunda/camundaTask");
+const path = require("path");
+const fs = require("fs");
+const dynamicChange = require("../utils/onChange/handleChange");
+const dynamicClick = require("../utils/onClick/handleClick");
+
+// Optimization: Add performance monitoring
+const performanceMonitor = {
+  calls: 0,
+  totalTime: 0,
+  averageTime: 0,
+  slowCalls: [],
+
+  recordCall(duration, details) {
+    this.calls++;
+    this.totalTime += duration;
+    this.averageTime = this.totalTime / this.calls;
+
+    // Track slow calls (over 5 seconds)
+    if (duration > 5000) {
+      this.slowCalls.push({
+        duration,
+        details,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Keep only last 20 slow calls
+      if (this.slowCalls.length > 20) {
+        this.slowCalls.shift();
+      }
+    }
+  },
+
+  getStats() {
+    return {
+      totalCalls: this.calls,
+      averageTime: Math.round(this.averageTime),
+      slowCallsCount: this.slowCalls.length,
+      recentSlowCalls: this.slowCalls.slice(-5),
+    };
+  },
+};
+
+// Function to broadcast event ke Firestore (pengganti FCM push notif)
+let broadcastTaskEvent;
+async function broadcastToClients(message) {
+  // message: { type, taskId, userId, taskName, ... }
+  if (typeof broadcastTaskEvent !== "function") {
+    try {
+      broadcastTaskEvent =
+        require("../utils/firebase/firestoreBroadcaster").broadcastTaskEvent;
+    } catch (err) {
+      console.error("Failed to load broadcastTaskEvent:", err);
+      throw new Error("broadcastTaskEvent is not available");
+    }
+  }
+  if (typeof broadcastTaskEvent !== "function") {
+    throw new Error("broadcastTaskEvent is not defined");
+  }
+
+  // Auto-fill missing fields from first task if tasks array exists
+  if (Array.isArray(message.tasks) && message.tasks.length > 0) {
+    const firstTask = message.tasks[0];
+
+    // Auto-fill taskName if missing
+    if (
+      (typeof message.taskName === "undefined" || message.taskName === null) &&
+      firstTask.name
+    ) {
+      message.taskName = firstTask.name;
+    }
+
+    // Auto-fill processInstanceId if missing
+    if (
+      (typeof message.processInstanceId === "undefined" ||
+        message.processInstanceId === null) &&
+      firstTask.processInstanceId
+    ) {
+      message.processInstanceId = firstTask.processInstanceId;
+    }
+
+    // Auto-fill taskDefinitionKey if missing
+    if (
+      (typeof message.taskDefinitionKey === "undefined" ||
+        message.taskDefinitionKey === null) &&
+      firstTask.taskDefinitionKey
+    ) {
+      message.taskDefinitionKey = firstTask.taskDefinitionKey;
+    }
+
+    // Auto-fill taskId if missing
+    if (
+      (typeof message.taskId === "undefined" || message.taskId === null) &&
+      firstTask.id
+    ) {
+      message.taskId = firstTask.id;
+    }
+  }
+
+  // Set defaults for required fields if still missing
+  if (!message.processInstanceId) {
+    message.processInstanceId = "unknown";
+  }
+  if (!message.taskDefinitionKey) {
+    message.taskDefinitionKey = "unknown";
+  }
+  if (!message.taskName) {
+    message.taskName = "Unknown Task";
+  }
+
+  console.log("📡 Broadcasting message:", message);
+  await broadcastTaskEvent(message);
+}
+
+async function protectedRoutes(fastify, options) {
+  fastify.get("/dynamicHome", async (request, reply) => {
+    try {
+      const result = await getDynamicHome(fastify);
+      reply.status(200).send({ data: result });
+    } catch (error) {
+      reply.status(500).send({ message: error.message });
+    }
+  });
+
+  fastify.get(
+    "/dynamicConfigure",
+    // { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { process } = request.query;
+
+      try {
+        if (!process) {
+          return reply
+            .status(400)
+            .send({ message: "Process parameter is required" });
+        }
+
+        const response = await configureProcess(fastify, process);
+
+        reply.status(200).send({ data: response });
+      } catch (error) {
+        reply.status(500).send({ message: error.message });
+      }
+    }
+  );
+
+  fastify.post(
+    "/dynamicQuery",
+    // { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      try {
+        if (!request.body) {
+          return reply
+            .status(400)
+            .send({ message: "Request Body is required" });
+        }
+
+        const response = await configureQuery(fastify, request.body);
+
+        reply.status(200).send({ data: response });
+      } catch (error) {
+        reply.status(500).send({ message: error.message });
+      }
+    }
+  );
+
+  fastify.post(
+    "/dynamicRender",
+    // { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const startTime = Date.now();
+      const { process, instance } = request.query;
+      const { session } = request.body;
+
+      // Optimization: Add request timeout
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(
+          () => reject(new Error("Request timeout after 30 seconds")),
+          30000
+        );
+      });
+
+      const parsedInstance =
+        instance && instance.includes("|") ? instance.split("|") : instance;
+
+      // Optimization: Race between actual request and timeout
+      const renderPromise = dynamicRender(
+        fastify,
+        process,
+        parsedInstance,
+        session
+      );
+
+      try {
+        const response = await Promise.race([renderPromise, timeoutPromise]);
+
+        const duration = Date.now() - startTime;
+        performanceMonitor.recordCall(duration, { process, instance });
+
+        console.log(`DynamicRender completed for ${process} in ${duration}ms`);
+        reply.status(200).send({ data: response });
+      } catch (error) {
+        const duration = Date.now() - startTime;
+        performanceMonitor.recordCall(duration, {
+          process,
+          instance,
+          error: error.message,
+        });
+
+        console.error(
+          `DynamicRender failed for ${process} after ${duration}ms:`,
+          error.message
+        );
+
+        // Optimization: Return specific error codes
+        if (error.message.includes("timeout")) {
+          reply
+            .status(408)
+            .send({ message: "Request timeout", details: error.message });
+        } else if (error.message.includes("Not found")) {
+          reply
+            .status(404)
+            .send({ message: "Process not found", details: error.message });
+        } else {
+          reply
+            .status(500)
+            .send({ message: "Internal server error", details: error.message });
+        }
+      }
+    }
+  );
+
+  // Optimization: Add performance monitoring endpoint
+  fastify.get("/api/performance", async (request, reply) => {
+    try {
+      const stats = {
+        ...performanceMonitor.getStats(),
+      };
+      reply.status(200).send(stats);
+    } catch (error) {
+      reply.status(500).send({ message: error.message });
+    }
+  });
+
+  // Optimization: Add cache management endpoint
+  fastify.delete("/api/cache", async (request, reply) => {
+    try {
+      const { process, instance } = request.query;
+
+      if (process || instance) {
+        // Clear specific cache entries
+        const keys = renderCache.keys();
+        const keysToDelete = keys.filter(
+          (key) =>
+            key.includes(`render_${process}`) || key.includes(`_${instance}_`)
+        );
+
+        keysToDelete.forEach((key) => renderCache.del(key));
+        reply.status(200).send({
+          message: `Cleared ${keysToDelete.length} cache entries`,
+          clearedKeys: keysToDelete,
+        });
+      } else {
+        // Clear all cache
+        renderCache.flushAll();
+        reply.status(200).send({ message: "All cache cleared" });
+      }
+    } catch (error) {
+      reply.status(500).send({ message: error.message });
+    }
+  });
+
+  fastify.post("/dynamicChange", async (request, reply) => {
+    try {
+      const { process } = request.query;
+      //console.log("body", request.body);
+      const { eventKey, event } = request.body;
+
+      //console.log("process:", process);
+      //console.log("eventKey:", eventKey);
+      //console.log("event:", event);
+
+      const data = await dynamicChange(fastify, process, event);
+
+      // Validasi opsional jika ingin aktifkan:
+      // if (!process) {
+      //   return reply.status(400).send({ message: "process parameter is required" });
+      // }
+      // let fieldSchema;
+
+      // if(event.product_name == ''){
+      //    fieldSchema = {};
+      // } else {
+      //    fieldSchema = {
+      //     label: "Location",
+      //     widget: "choicesjs",
+      //     tableView: true,
+      //     data: {
+      //       values: [
+      //         { label: "1A1", value: "1A1" },
+      //         { label: "1B1", value: "1B1" }
+      //       ]
+      //     },
+      //     refreshOn: "product_name",
+      //     validate: {
+      //       required: true
+      //     },
+      //     validateWhenHidden: false,
+      //     key: "location",
+      //     type: "select",
+      //     input: true
+      //   };
+      // }
+
+      return reply.status(200).send({ schema: data.data });
+    } catch (error) {
+      console.error("Error in /dynamicChange:", error);
+      return reply.status(500).send({ message: error.message });
+    }
+  });
+
+  fastify.post(
+    "/dynamicSubmit",
+    // { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { process } = request.query;
+
+      if (!process) {
+        return reply
+          .status(400)
+          .send({ message: "process parameter is required" });
+      }
+
+      const { eventKey, event } = request.body;
+      if (!eventKey || !event) {
+        return reply
+          .status(400)
+          .send({ message: "eventKey and event parameter are required" });
+      }
+
+      try {
+        const { file, submissionData, ...otherEvent } = event;
+        // console.log("evidence", evidence);
+
+        // Extract evidence names if evidence exists
+        const evidenceNames = file ? file.map((file) => file.name) : [];
+
+        const dataFull = {
+          ...otherEvent,
+          process: process,
+          evidence: evidenceNames, // Include only evidence names
+        };
+        let dataForm;
+
+        // Store complete evidence object for separate upload if needed
+        let fileToUpload = file;
+
+        // console.log("fileToUpload", fileToUpload);
+
+        if (!submissionData) {
+          // If no submissionData, send data with evidence names
+          dataForm = {
+            process: process,
+            body: {
+              eventKey: eventKey,
+              data: [dataFull], // Data with evidence names only
+            },
+          };
+        } else {
+          // If submissionData exists, process as array
+          const processedData = submissionData.map((item) => {
+            let itemData = { ...item };
+
+            // Handle evidence in item if it exists
+            const { file: itemEvidence, ...itemWithoutEvidence } = itemData;
+
+            // Extract evidence names if itemEvidence exists
+            const itemEvidenceNames = itemEvidence
+              ? itemEvidence.map((file) => file.name)
+              : [];
+
+            if (itemEvidence) {
+              fileToUpload = itemEvidence; // Store complete evidence object for separate upload
+            }
+
+            // console.log("itemEvidence", fileToUpload);
+
+            const dataFull = {
+              ...itemWithoutEvidence,
+              process: process,
+              evidence: itemEvidenceNames, // Include only evidence names
+            };
+
+            return dataFull;
+          });
+
+          dataForm = {
+            process: process,
+            body: {
+              eventKey: eventKey,
+              data: processedData,
+            },
+          };
+        }
+
+        //console.log("Data Form:", dataForm);
+
+        // Send dataForm first without complete file data
+        const responseData = await configureHandler(fastify, dataForm);
+
+        reply.status(200).send({ data: responseData });
+      } catch (error) {
+        reply.status(500).send({ message: error.message });
+      }
+    }
+  );
+
+  fastify.post("/dynamicClick", async (request, reply) => {
+    const { process } = request.query;
+    const { eventKey, event, session } = request.body;
+    console.log("request body", request.body);
+
+    try {
+      const response = await dynamicClick(fastify, process, event, session);
+
+      // Kirim response ke frontend
+      reply.status(200).send({
+        message: "Event processed successfully",
+        data: response,
+      });
+    } catch (error) {
+      console.error("Error in dynamicClick:", error);
+      reply.status(500).send({
+        message: error.message,
+        success: false,
+      });
+    }
+  });
+
+  fastify.post("/dynamicQR", async (request, reply) => {
+    const { resi, groups, userId } = request.body;
+
+    //console.log("request body", request.body)
+
+    if (!resi) {
+      return reply
+        .status(400)
+        .send({ message: "Parameter 'resi' diperlukan." });
+    }
+
+    //console.log("haii")
+
+    try {
+      //console.log("masuk cek")
+      const result = await checkQRInstance(fastify, resi, groups, userId);
+      //console.log("result", result)
+      if (result.status === 200) {
+        // Sukses, task sudah dicek dan di-claim jika perlu
+        const redirectUrl = `/form?process=${result.process}&instance=${result.instance}`;
+        reply.status(200).send({ url: redirectUrl, ...result });
+      } else {
+        // fallback, mestinya tidak masuk sini
+        reply.status(200).send(result);
+      }
+    } catch (error) {
+      if (error.status === 300) {
+        // Tidak boleh akses task atau task sudah di-claim oleh user lain
+        reply.status(300).send({ message: error.message });
+      } else {
+        reply.status(404).send({ message: error.message });
+      }
+    }
+  });
+
+  fastify.post("/dynamicQRInternal", async (request, reply) => {
+    const { resi, groups, userId } = request.body;
+
+    //console.log("request body", request.body)
+
+    if (!resi) {
+      return reply
+        .status(400)
+        .send({ message: "Parameter 'resi' diperlukan." });
+    }
+
+    //console.log("haii")
+
+    try {
+      //console.log("masuk cek")
+      const result = await checkQRInternal(fastify, resi, groups, userId);
+      //console.log("result", result)
+      if (result.status === 200) {
+        // Sukses, task sudah dicek dan di-claim jika perlu
+        const redirectUrl = `/form?process=${result.process}&instance=${result.instance}`;
+        reply.status(200).send({ url: redirectUrl, ...result });
+      } else {
+        // fallback, mestinya tidak masuk sini
+        reply.status(200).send(result);
+      }
+    } catch (error) {
+      if (error.status === 300) {
+        // Tidak boleh akses task atau task sudah di-claim oleh user lain
+        reply.status(300).send({ message: error.message });
+      } else {
+        reply.status(404).send({ message: error.message });
+      }
+    }
+  });
+
+  fastify.get(
+    "/ldaplist",
+    // { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      try {
+        const { uid, cn, sn, group } = request.query;
+        const response = await getUsers(fastify, { uid, cn, sn, group });
+        reply.status(200).send({ data: response });
+      } catch (error) {
+        reply.status(500).send({ message: error.message });
+      }
+    }
+  );
+
+  fastify.get(
+    "/chemisList",
+    // { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      try {
+        const response = await cmisConfigList(
+          fastify,
+          request.headers["cmis-auth"]
+        );
+
+        reply.status(200).send({ data: response });
+      } catch (error) {
+        reply.status(500).send({ message: error.message });
+      }
+    }
+  );
+
+  fastify.get(
+    "/chemisView/:id",
+    // { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { id } = request.params;
+      if (!id) {
+        return reply.status(400).send({ message: "id parameter is required" });
+      }
+
+      try {
+        const response = await cmisConfigView(
+          fastify,
+          request.headers["cmis-auth"],
+          id
+        );
+
+        reply.status(200).send({ data: response });
+      } catch (error) {
+        reply.status(500).send({ message: error.message });
+      }
+    }
+  );
+
+  fastify.post(
+    "/chemisUpload",
+    // { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      //console.log("cmis upload");
+      try {
+        const data = await request.files();
+        //console.log("data", data)
+
+        if (!data) {
+          reply.status(400).send({ message: "File is required" });
+        }
+
+        const response = await cmisConfigUpload(
+          fastify,
+          //request.headers["cmis-auth"],
+          data
+        );
+
+        reply.status(200).send({ data: response });
+      } catch (error) {
+        reply.status(500).send({ message: error.message });
+      }
+    }
+  );
+
+  fastify.get(
+    "/api/report/:initiator",
+    //{ preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { initiator } = request.params;
+      //console.log("initiator", initiator);
+
+      if (!initiator) {
+        return reply
+          .status(400)
+          .send({ message: "initiator parameter is required" });
+      }
+
+      // const client = await fastify.pg.connect();
+
+      try {
+        const result = await fetchAllReport(initiator);
+        return result;
+      } catch (err) {
+        request.log.error(err);
+        throw new Error("Failed to fetch tasks");
+      }
+    }
+  );
+
+  fastify.get(
+    "/api/task",
+    //{ preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { initiator, group } = request.query;
+      if (!initiator && !group) {
+        return reply
+          .status(400)
+          .send({ message: "initiator parameter is required" });
+      }
+
+      try {
+        // Pass the broadcastToClients function to fetchAllTasks
+        const result = await fetchAllTasks(
+          initiator,
+          group,
+          false,
+          broadcastToClients
+        );
+        return result;
+      } catch (err) {
+        request.log.error(err);
+        throw new Error("Failed to fetch tasks");
+      }
+    }
+  );
+
+  fastify.post("/api/task", async (request, reply) => {
+    const { status } = request.body;
+
+    if (status === undefined) {
+      return reply
+        .status(400)
+        .send({ message: "Status (0 or 1) is required." });
+    }
+
+    try {
+      if (status === 1) {
+        return await claimTask(request, reply, broadcastToClients);
+      } else if (status === 0) {
+        return await unclaimTask(request, reply, broadcastToClients);
+      } else {
+        return reply
+          .status(400)
+          .send({ message: "Invalid status value. Use 0 or 1." });
+      }
+    } catch (err) {
+      request.log.error(err);
+      return reply
+        .status(500)
+        .send({ message: "Unexpected error", detail: err.message });
+    }
+  });
+
+  fastify.get("/get-image/:gambar", async (request, reply) => {
+    try {
+      const { gambar } = request.params;
+      if (!gambar) {
+        return reply.status(400).send({ error: "Image name is required" });
+      }
+
+      // Decode URL parameter to handle %20 as spaces
+      const decodedGambar = decodeURIComponent(gambar);
+
+      // Tentukan path gambar dengan nama file yang sudah di-decode
+      const filePath = path.join(
+        __dirname,
+        "../../../../server-doc",
+        decodedGambar
+      );
+
+      // Periksa apakah file ada
+      if (!fs.existsSync(filePath)) {
+        return reply.status(404).send({ error: "Image not found" });
+      }
+
+      // Ambil mime type berdasarkan ekstensi file
+      const extension = path.extname(filePath).substring(1);
+      const mimeType = `image/${extension}`;
+
+      // Kirim file sebagai respons
+      reply.header("Content-Type", mimeType);
+      return reply.send(fs.createReadStream(filePath));
+    } catch (error) {
+      console.error(error);
+      reply.status(500).send({ error: "Internal Server Error" });
+    }
+  });
+
+  fastify.get("/generate-barcode/:text", async (request, reply) => {
+    try {
+      const barcode = await generateBarcode(request.params.text);
+      reply.type("image/png").send(barcode);
+    } catch (error) {
+      reply.code(500).send(error);
+    }
+  });
+
+  fastify.get("/generate-qr/:text", async (request, reply) => {
+    try {
+      const qrDataUrl = await generateQR(request.params.text);
+      reply
+        .type("image/png")
+        .send(Buffer.from(qrDataUrl.split(",")[1], "base64"));
+    } catch (error) {
+      reply.code(500).send(error);
+    }
+  });
+}
+
+module.exports = protectedRoutes;
