@@ -21,11 +21,15 @@ const eventHandlers = {
           },
         };
 
-        const responseCamunda = await camundaConfig(dataCamunda, instanceId, process);
+        const responseCamunda = await camundaConfig(
+          dataCamunda,
+          instanceId,
+          process
+        );
         console.log("responseCamunda", responseCamunda);
 
         if (responseCamunda.status === 200 || responseCamunda.status === 204) {
-          const dataQuery = item.products.map(product => ({
+          const dataQuery = item.products.map((product) => ({
             graph: {
               method: "mutate",
               endpoint: GRAPHQL_API,
@@ -35,7 +39,9 @@ const eventHandlers = {
                   $sku_toko: String!,
                   $sku_toko_change: String!,
                   $quantity_change: Int!,
-                  $status: String!
+                  $status: String!,
+                  $invoice: String!,
+                  $resi: String!
                 ) {
                   update_mo_dropship(
                     where: {
@@ -45,7 +51,9 @@ const eventHandlers = {
                     },
                     _set: {
                       quantity: $quantity_change,
-                      sku: $sku_toko_change
+                      sku: $sku_toko_change,
+                      invoice: $invoice,
+                      resi: $resi
                     }
                   ) {
                     affected_rows
@@ -57,8 +65,10 @@ const eventHandlers = {
                 sku_toko: product.sku,
                 sku_toko_change: product.sku_toko_change,
                 quantity_change: product.quantity_order_change,
-                status: "Correction"
-              }
+                status: "Correction",
+                invoice: item.invoice,
+                resi: item.resi,
+              },
             },
             query: [],
           }));
@@ -66,7 +76,7 @@ const eventHandlers = {
           console.log("dataQuery", dataQuery);
 
           const responseQuery = await Promise.all(
-            dataQuery.map(query => configureQuery(fastify, query))
+            dataQuery.map((query) => configureQuery(fastify, query))
           );
 
           results.push({
@@ -107,4 +117,3 @@ const handle = async (eventData) => {
 };
 
 module.exports = { handle };
-
