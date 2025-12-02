@@ -214,7 +214,7 @@ async function sendNotificationToGroup(userGroups, notification, data = {}) {
     // Step 2: Dapatkan semua anggota dari grup-grup tersebut
     const groupMembers = await getGroupMembers(userGroups);
     if (!groupMembers || groupMembers.length === 0) {
-      throw new Error(`No members found in user groups`);
+      throw new Error(`No members found in user groups: ${userGroups.join(', ')}`);
     }
 
     // Step 3: Exclude user yang mengirim notifikasi (opsional)
@@ -277,4 +277,3 @@ module.exports = {
   getGroupMembers,
   getFcmTokens
 };
-

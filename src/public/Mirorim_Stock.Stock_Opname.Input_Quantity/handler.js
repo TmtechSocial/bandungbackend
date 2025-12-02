@@ -72,14 +72,14 @@ const eventHandlers = {
               method: "mutate",
               endpoint: GRAPHQL_API,
               gqlQuery: `
-              mutation InsertStockOpnameLogs($proc_inst_id: String!, $quantity_input: numeric!, $task_def_key: String!, $status: String!, $user: String!, $created_at: timestamp!) {
-  insert_stock_opname_logs(objects: {proc_inst_id: $proc_inst_id, quantity_input: $quantity_input, task_def_key: $task_def_key, user: $user, created_at: $created_at}) {
-    affected_rows
-  }
-  update_stock_opname(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {status: $status}) {
-    affected_rows
-  }
-}     
+                mutation InsertStockOpnameLogs($proc_inst_id: String!, $quantity_input: numeric!, $task_def_key: String!, $status: String!, $user: String!, $created_at: timestamp!, $evidence: String!, $quantity_data: numeric!) {
+                insert_stock_opname_logs(objects: {proc_inst_id: $proc_inst_id, quantity_input: $quantity_input, task_def_key: $task_def_key, user: $user, created_at: $created_at, evidence: $evidence, quantity_data: $quantity_data}) {
+                  affected_rows
+                }
+                update_stock_opname(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {status: $status}) {
+                  affected_rows
+                }
+              }     
               `,
               variables: {
                 proc_inst_id: item.proc_inst_id,
@@ -90,6 +90,8 @@ const eventHandlers = {
                 created_at: new Date(
                   new Date().getTime() + 7 * 60 * 60 * 1000
                 ).toISOString(),
+                evidence: item.evidence[0] || "",
+                quantity_data: quantity_system || 0,
               },
             },
             query: [],

@@ -1,14 +1,21 @@
 const fastify = require("fastify")();
 const dotenv = require("dotenv");
 const axios = require("axios");
-const { countStock, addStock, removeStock, transferStock, mergeStock, trackStock } = require("../inventree/inventreeActions");
+const {
+  countStock,
+  addStock,
+  removeStock,
+  transferStock,
+  mergeStock,
+  trackStock,
+} = require("../inventree/inventreeActions");
 
 const { Pool } = require("pg");
 
 const pool = new Pool({
   user: process.env.DB_USER,
   host: process.env.DB_HOST,
-  database: process.env.DB_INVENTREE, // inventree
+  database: process.env.DB_INVENTREE || "inventree", // inventree
   password: process.env.DB_PASSWORD,
   port: parseInt(process.env.DB_PORT || "5432"),
 });
@@ -17,10 +24,6 @@ dotenv.config();
 
 const CAMUNDA_API = process.env.CAMUNDA_API;
 const GRAPHQL_API = process.env.GRAPHQL_API;
-const BIGCAPITAL_API = process.env.BIGCAPITAL_API;
-const BIGCAPITAL_TOKEN = process.env.BIGCAPITAL_TOKEN;
-const BIGCAPITAL_ORGANIZATION_ID = process.env.BIGCAPITAL_ORGANIZATION_ID;
-
 const { configureQuery } = require("../../controller/controllerConfig");
 
 console.log("CAMUNDA_API:", CAMUNDA_API);
@@ -94,9 +97,13 @@ import("camunda-external-task-client-js").then(
         const sku = refill.sku;
         const skugudang = refill.warehouse_sku;
         const approve = refill.quantity_approve ?? 0;
-        const qCompare = await getLastQty("Mirorim_Operasional.Refill.Compare_Refill");
+        const qCompare = await getLastQty(
+          "Mirorim_Operasional.Refill.Compare_Refill"
+        );
         const qQc = await getLastQty("Mirorim_Operasional.Refill.QC_Refill");
-        const qWasit = await getLastQty("Mirorim_Operasional.Refill.Adjusment_Refill");
+        const qWasit = await getLastQty(
+          "Mirorim_Operasional.Refill.Adjusment_Refill"
+        );
 
         const adjCompare = qCompare != null ? qCompare - approve : 0;
         const adjQc = qQc != null && qCompare != null ? qQc - qCompare : 0;
@@ -142,13 +149,20 @@ import("camunda-external-task-client-js").then(
         };
 
         // Adjustment posts
-        await postAdj(adjCompare, "QC Gudang", `Compare (${qCompare}) - Approve (${approve})`);
+        await postAdj(
+          adjCompare,
+          "QC Gudang",
+          `Compare (${qCompare}) - Approve (${approve})`
+        );
         await postAdj(adjQc, "Toko", `QC (${qQc}) - Compare (${qCompare})`);
         await postAdj(adjWasit, "Wasit", `Wasit (${qWasit}) - QC (${qQc})`);
 
         // Final remove
         const notesRemove = `Refill Final ke ${sku} dari ${skugudang} | Proc Inst ID: ${proc_inst_id}`;
-        const alreadyRemove = await checkHistory(refill.stock_pk_resource, notesRemove);
+        const alreadyRemove = await checkHistory(
+          refill.stock_pk_resource,
+          notesRemove
+        );
         if (!alreadyRemove) {
           await inventree.post("/stock/remove/", {
             items: [{ pk: refill.stock_pk_resource, quantity: refill_qty }],
@@ -190,7 +204,8 @@ import("camunda-external-task-client-js").then(
           },
         });
         const qcDetail = resQc?.data?.[0]?.graph?.mo_refill_detail?.[0];
-        const isValid = qcDetail && qcDetail.quantity_data === qcDetail.quantity_physical;
+        const isValid =
+          qcDetail && qcDetail.quantity_data === qcDetail.quantity_physical;
 
         const partRes = await inventree.get(`/part/${refill.part_id}/`);
         const product_name = partRes?.data?.full_name ?? "Unknown Product";
@@ -207,7 +222,13 @@ import("camunda-external-task-client-js").then(
           second: "2-digit",
         });
         const parts = formatter.formatToParts(date);
-        const formatted = `${parts.find((p) => p.type === "year").value}-${parts.find((p) => p.type === "month").value}-${parts.find((p) => p.type === "day").value} ${parts.find((p) => p.type === "hour").value}:${parts.find((p) => p.type === "minute").value}:${parts.find((p) => p.type === "second").value}`;
+        const formatted = `${parts.find((p) => p.type === "year").value}-${
+          parts.find((p) => p.type === "month").value
+        }-${parts.find((p) => p.type === "day").value} ${
+          parts.find((p) => p.type === "hour").value
+        }:${parts.find((p) => p.type === "minute").value}:${
+          parts.find((p) => p.type === "second").value
+        }`;
 
         console.log({ isValid, product_name, formatted });
 
@@ -255,211 +276,349 @@ import("camunda-external-task-client-js").then(
       }
     });
 
+    client.subscribe(
+      "Mutasi_Inventory",
+      async function ({ task, taskService }) {
+        console.log("Task Dijalankan:", task.id);
 
-    //     client.subscribe("Mutasi_Inventory", async function ({ task, taskService }) {
-    //     console.log("Task Dijalankan:", task.id);
+        try {
+          const proc_inst_id = task.processInstanceId;
+          const quantity_sisa = task.variables.get("quantity_sisa");
+          const quantity_total_toko = task.variables.get("quantity_total_toko");
 
-    //     try {
-    //       const proc_inst_id = task.processInstanceId;
+          // 1. Ambil data refill dari GraphQL
+          const dataQuery = {
+            graph: {
+              method: "query",
+              endpoint: GRAPHQL_API,
+              gqlQuery: `query MyQuery($proc_inst_id: [String!]) {
+             mo_refill(where: {proc_inst_id: {_in: $proc_inst_id}}, order_by: {created_at: asc}) {
+               quantity_approve
+               stock_pk_resource
+               quantity_approval
+               destination_location_id
+               sku
+               part_id
+             }
+           }`,
+              variables: {
+                proc_inst_id: [proc_inst_id],
+              },
+            },
+            query: [],
+          };
 
-    //       // 1. Ambil data refill dari GraphQL
-    //       const dataQuery = {
-    //         graph: {
-    //           method: "query",
-    //           endpoint: GRAPHQL_API,
-    //           gqlQuery: `query MyQuery($proc_inst_id: [String!]) {
-    //       mo_refill(where: {proc_inst_id: {_in: $proc_inst_id}}, order_by: {created_at: asc}) {
-    //         quantity_approve
-    //         stock_pk_resource
-    //         quantity_approval
-    //         destination_location_id
-    //         sku
-    //         part_id
-    //       }
-    //     }`,
-    //           variables: {
-    //             proc_inst_id: [proc_inst_id],
-    //           },
-    //         },
-    //         query: [],
-    //       };
+          const responseQuery = await configureQuery(fastify, dataQuery);
+          const refills = responseQuery?.data?.[0]?.graph?.mo_refill;
+          const refill = refills?.[refills.length - 1];
+          if (!refill)
+            throw new Error("❌ Data refill tidak ditemukan dari GraphQL");
 
-    //       const responseQuery = await configureQuery(fastify, dataQuery);
-    //       const refills = responseQuery?.data?.[0]?.graph?.mo_refill;
-    //       const refill = refills?.[refills.length - 1];
-    //       if (!refill)
-    //         throw new Error("❌ Data refill tidak ditemukan dari GraphQL");
+          const {
+            stock_pk_resource,
+            destination_location_id,
+            sku,
+            quantity_approval,
+            quantity_approve,
+            part_id,
+          } = refill;
 
-    //       const {
-    //         stock_pk_resource,
-    //         destination_location_id,
-    //         sku,
-    //         quantity_approval,
-    //         quantity_approve,
-    //         part_id,
-    //       } = refill;
+          // 2. GET stok di lokasi tujuan (toko)
+          const locationResponse = await axios.get(
+            `${
+              process.env.SERVER_INVENTREE
+            }/api/stock/?location=${encodeURIComponent(
+              destination_location_id
+            )}&part=${encodeURIComponent(part_id)}`,
+            {
+              headers: {
+                Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+              },
+            }
+          );
 
-    //       // 2. GET stok di lokasi tujuan (toko)
-    //       const locationResponse = await axios.get(
-    //         `${
-    //           process.env.SERVER_INVENTREE
-    //         }/api/stock/?location=${encodeURIComponent(
-    //           destination_location_id
-    //         )}&part=${encodeURIComponent(part_id)}`,
-    //         {
-    //           headers: {
-    //             Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-    //           },
-    //         }
-    //       );
+          const locations = locationResponse.data.results || [];
+          const locationStock = locations[0];
+          console.log("🔍 Lokasi stok tujuan:", locationStock);
 
-    //       const locations = locationResponse.data.results || [];
-    //       const locationStock = locations[0];
-    //       console.log("🔍 Lokasi stok tujuan:", locationStock);
+          if (!locationStock)
+            throw new Error("❌ Tidak ada stock tersedia di lokasi tujuan");
 
-    //       if (!locationStock)
-    //         throw new Error("❌ Tidak ada stock tersedia di lokasi tujuan");
+          // 3. Remove stok gudang
+          const payloadGudang = {
+            items: [
+              {
+                pk: stock_pk_resource,
+                quantity: Math.abs(quantity_approve),
+              },
+            ],
+            notes: `Refill ke sku ${sku} | Proc ID: ${proc_inst_id}`,
+          };
 
-    //       // 3. Remove stok gudang
-    //       const payloadGudang = {
-    //         items: [
-    //           {
-    //             pk: stock_pk_resource,
-    //             quantity: Math.abs(quantity_approve),
-    //           },
-    //         ],
-    //         notes: `Refill ke sku ${sku} | Proc ID: ${proc_inst_id}`,
-    //       };
+          const removeRes = await axios.post(
+            `${process.env.SERVER_INVENTREE}/api/stock/remove/`,
+            payloadGudang,
+            {
+              headers: {
+                Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+                "Content-Type": "application/json",
+              },
+            }
+          );
+          console.log(
+            "🔻 Koreksi stok dikurangi Untuk Gudang:",
+            removeRes.data
+          );
 
-    //       const removeRes = await axios.post(
-    //         `${process.env.SERVER_INVENTREE}/api/stock/remove/`,
-    //         payloadGudang,
-    //         {
-    //           headers: {
-    //             Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-    //             "Content-Type": "application/json",
-    //           },
-    //         }
-    //       );
-    //       console.log(
-    //         "🔻 Koreksi stok dikurangi Untuk Gudang:",
-    //         removeRes.data
-    //       );
+          // 4. Add stok toko
+          if (!locationStock?.pk || isNaN(locationStock.pk)) {
+            throw new Error(
+              `❌ PK lokasi tidak valid: ${JSON.stringify(locationStock)}`
+            );
+          }
 
-    //       // 4. Add stok toko
-    //       if (!locationStock?.pk || isNaN(locationStock.pk)) {
-    //         throw new Error(
-    //           `❌ PK lokasi tidak valid: ${JSON.stringify(locationStock)}`
-    //         );
-    //       }
+          const payloadToko = {
+            items: [
+              {
+                pk: locationStock.pk,
+                quantity: Math.abs(quantity_approve),
+              },
+            ],
+            notes: `Refill ke sku ${sku} | Proc ID: ${proc_inst_id}`,
+          };
 
-    //       const payloadToko = {
-    //         items: [
-    //           {
-    //             pk: locationStock.pk,
-    //             quantity: Math.abs(quantity_approve),
-    //           },
-    //         ],
-    //         notes: `Refill ke sku ${sku} | Proc ID: ${proc_inst_id}`,
-    //       };
+          console.log(
+            "📦 Payload ke InvenTree:",
+            JSON.stringify(payloadToko, null, 2)
+          );
 
-    //       console.log(
-    //         "📦 Payload ke InvenTree:",
-    //         JSON.stringify(payloadToko, null, 2)
-    //       );
+          const addRes = await axios.post(
+            `${process.env.SERVER_INVENTREE}/api/stock/add/`,
+            payloadToko,
+            {
+              headers: {
+                Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+                "Content-Type": "application/json",
+              },
+            }
+          );
+          console.log("🔺 Penambah stok toko:", addRes.data);
 
-    //       const addRes = await axios.post(
-    //         `${process.env.SERVER_INVENTREE}/api/stock/add/`,
-    //         payloadToko,
-    //         {
-    //           headers: {
-    //             Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-    //             "Content-Type": "application/json",
-    //           },
-    //         }
-    //       );
-    //       console.log("🔺 Penambah stok toko:", addRes.data);
+          // 5. Adjustment jika selisih quantity
+          if (quantity_approve !== quantity_approval) {
+            const selisih = quantity_approve - quantity_approval;
+            console.log("⚖️ Perlu Adjustment Packaging:", selisih);
 
-    //       // 5. Adjustment jika selisih quantity
-    //       if (quantity_approve !== quantity_approval) {
-    //         const selisih = quantity_approve - quantity_approval;
-    //         console.log("⚖️ Perlu Adjustment Packaging:", selisih);
+            const stockResponse = await axios.get(
+              `${process.env.SERVER_INVENTREE}/api/stock/?location=${destination_location_id}&part=${part_id}&ordering=updated`,
+              {
+                headers: {
+                  Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+                },
+              }
+            );
 
-    //         const stockResponse = await axios.get(
-    //           `${process.env.SERVER_INVENTREE}/api/stock/?location=${destination_location_id}&part=${part_id}&ordering=updated`,
-    //           {
-    //             headers: {
-    //               Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-    //             },
-    //           }
-    //         );
+            const stockList = stockResponse?.data?.results || [];
+            const validStocks = stockList
+              .filter((item) => item.updated !== null)
+              .sort((a, b) => new Date(b.updated) - new Date(a.updated));
 
-    //         const stockList = stockResponse?.data?.results || [];
-    //         const validStocks = stockList
-    //           .filter((item) => item.updated !== null)
-    //           .sort((a, b) => new Date(b.updated) - new Date(a.updated));
+            const latestStock = validStocks[0];
+            if (!latestStock)
+              throw new Error("❌ Tidak menemukan stock valid untuk koreksi");
 
-    //         const latestStock = validStocks[0];
-    //         if (!latestStock)
-    //           throw new Error("❌ Tidak menemukan stock valid untuk koreksi");
+            const adjustPayload = {
+              items: [
+                {
+                  pk: latestStock.pk,
+                  quantity: Math.abs(selisih),
+                },
+              ],
+              notes: `Adjustment Packaging | Proc ID: ${proc_inst_id}`,
+            };
 
-    //         const adjustPayload = {
-    //           items: [
-    //             {
-    //               pk: latestStock.pk,
-    //               quantity: Math.abs(selisih),
-    //             },
-    //           ],
-    //           notes: `Adjustment Packaging | Proc ID: ${proc_inst_id}`,
-    //         };
+            if (selisih > 0) {
+              const res = await axios.post(
+                `${process.env.SERVER_INVENTREE}/api/stock/remove/`,
+                adjustPayload,
+                {
+                  headers: {
+                    Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+                    "Content-Type": "application/json",
+                  },
+                }
+              );
+              console.log("🔻 Koreksi stok dikurangi:", res.data);
+            } else {
+              const res = await axios.post(
+                `${process.env.SERVER_INVENTREE}/api/stock/add/`,
+                adjustPayload,
+                {
+                  headers: {
+                    Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+                    "Content-Type": "application/json",
+                  },
+                }
+              );
+              console.log("🔺 Koreksi stok ditambahkan:", res.data);
+            }
+          } else {
+            console.log("ℹ️ Tidak ada selisih, stok sudah sesuai.");
+          }
 
-    //         if (selisih > 0) {
-    //           const res = await axios.post(
-    //             `${process.env.SERVER_INVENTREE}/api/stock/remove/`,
-    //             adjustPayload,
-    //             {
-    //               headers: {
-    //                 Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-    //                 "Content-Type": "application/json",
-    //               },
-    //             }
-    //           );
-    //           console.log("🔻 Koreksi stok dikurangi:", res.data);
-    //         } else {
-    //           const res = await axios.post(
-    //             `${process.env.SERVER_INVENTREE}/api/stock/add/`,
-    //             adjustPayload,
-    //             {
-    //               headers: {
-    //                 Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-    //                 "Content-Type": "application/json",
-    //               },
-    //             }
-    //           );
-    //           console.log("🔺 Koreksi stok ditambahkan:", res.data);
-    //         }
-    //       } else {
-    //         console.log("ℹ️ Tidak ada selisih, stok sudah sesuai.");
-    //       }
+          const variables = new Variables();
+          // 🔍 Cek selisih quantity antara Camunda variable dan API
+          try {
+            // 1. Ambil stok resource (gudang)
+            const gudangStockRes = await axios.get(
+              `${process.env.SERVER_INVENTREE}/api/stock/${stock_pk_resource}/`,
+              {
+                headers: {
+                  Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+                },
+              }
+            );
+            const gudangQuantityAPI = gudangStockRes?.data?.quantity ?? null;
+            const gudangLocationId = gudangStockRes?.data?.location ?? null;
 
-    //       // ✅ Selesaikan task
-    //       await taskService.complete(task);
-    //       console.log(`✅ Task ${task.id} berhasil diselesaikan.`);
-    //     } catch (error) {
-    //       if (error.response) {
-    //         console.error(
-    //           "❌ Gagal memproses task:",
-    //           error.response.status,
-    //           error.response.data
-    //         );
-    //       } else {
-    //         console.error("❌ Gagal memproses task:", error.message);
-    //       }
-    //     }
-    //   }
-    // );
+            console.log(
+              "🔍 Cek selisih quantity antara Camunda variable dan API"
+            );
+            console.log("🏢 Gudang - Quantity (API):", gudangQuantityAPI);
+            console.log("🏢 Gudang - Lokasi (API):", gudangLocationId);
+
+            // 2. Ambil stok toko (lokasi tujuan)
+            const tokoStockRes = await axios.get(
+              `${process.env.SERVER_INVENTREE}/api/stock/?location=${destination_location_id}&part=${part_id}&ordering=updated`,
+              {
+                headers: {
+                  Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+                },
+              }
+            );
+
+            const tokoQuantityAPI =
+              tokoStockRes?.data?.results?.[0]?.quantity ?? null;
+
+            console.log("🏬 Toko - Quantity (API):", tokoQuantityAPI);
+
+            console.log("ini gudang", quantity_sisa, gudangQuantityAPI);
+            console.log("ini toko", quantity_total_toko, tokoQuantityAPI);
+
+            // 3. Compare
+            variables.set("stock_selisih", false);
+            variables.set("toko", false);
+            variables.set("gudang", false);
+
+            let stock_selisih = false;
+            let toko = false;
+            let gudang = false;
+
+            if (
+              quantity_sisa !== gudangQuantityAPI ||
+              quantity_total_toko !== tokoQuantityAPI
+            ) {
+              stock_selisih = true;
+
+              // ✅ Cek mismatch toko
+              if (quantity_total_toko !== tokoQuantityAPI) {
+                toko = true;
+              }
+
+              // ✅ Cek mismatch gudang
+              if (quantity_sisa !== gudangQuantityAPI) {
+                gudang = true;
+              }
+
+              console.log("selisih", stock_selisih, { toko, gudang });
+
+              // Ambil product_name dari API part
+              const partRes = await axios.get(
+                `${process.env.SERVER_INVENTREE}/api/part/${part_id}/`,
+                {
+                  headers: {
+                    Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+                  },
+                }
+              );
+              const product_name = partRes?.data?.name ?? null;
+              console.log("ini part name", product_name);
+
+              // Format location_ids
+              const location_ids = [gudangLocationId, destination_location_id];
+              console.log("ini location_ids", location_ids);
+
+              // Tanggal
+              const date = new Date().toISOString();
+
+              // Set variables ke Camunda
+              variables.set("stock_selisih", stock_selisih);
+              variables.set("toko", toko);
+              variables.set("gudang", gudang);
+              variables.setTyped("location_ids", {
+                value: JSON.stringify(location_ids),
+                type: "Object",
+                valueInfo: {
+                  serializationDataFormat: "application/json",
+                  objectTypeName: "java.util.ArrayList",
+                },
+              });
+              variables.set("part_id", part_id);
+              variables.set("type", "Refill");
+              variables.set("product_name", product_name);
+              variables.set("date", date);
+            } else {
+              console.log(
+                "✅ Quantity di Camunda dan API sesuai, tidak ada stock_selisih."
+              );
+            }
+          } catch (err) {
+            console.error(
+              "❌ Error saat pengecekan quantity_sisa dan quantity_total_toko:",
+              err.message
+            );
+          }
+          // ✅ Selesaikan task
+          await taskService.complete(task, variables);
+          console.log(`✅ Task ${task.id} berhasil diselesaikan.`);
+        } catch (error) {
+          console.error("❌ Gagal memproses task:", error.message || error);
+
+          await taskService.handleFailure(task, {
+            errorMessage: error.message || "Unknown error",
+            errorDetails: error.stack || "",
+            retries: 3,
+            retryTimeout: 30000,
+          });
+        }
+      }
+    );
 
     client.subscribe("Remove_Stock", async function ({ task, taskService }) {
+      console.log("Auto-completing Task:", task.id);
+
+      try {
+        await taskService.complete(task);
+        console.log(`✅ Task ${task.id} berhasil diselesaikan (auto).`);
+      } catch (error) {
+        console.error("❌ Gagal menyelesaikan task:", error.message);
+      }
+    });
+
+    client.subscribe(
+      "deliveredInvoice",
+      async function ({ task, taskService }) {
+        console.log("Auto-completing Task:", task.id);
+        try {
+          await taskService.complete(task);
+          console.log(`✅ Task ${task.id} berhasil diselesaikan (auto).`);
+        } catch (error) {
+          console.error("❌ Gagal menyelesaikan task:", error.message);
+        }
+      }
+    );
+
+    client.subscribe("Add_Stock", async function ({ task, taskService }) {
       console.log("Task Dijalankan:", task.id);
 
       try {
@@ -472,13 +631,13 @@ import("camunda-external-task-client-js").then(
             method: "query",
             endpoint: GRAPHQL_API,
             gqlQuery: `query MyQuery($proc_inst_id: [String!]) {
-          mo_order_shop(where: {proc_inst_id: {_in: $proc_inst_id}}) {
-            proc_inst_id
-            invoice
-            sku_toko
-            quantity_convert
-          }
-        }`,
+              mo_order_shop(where: {proc_inst_id: {_in: $proc_inst_id}}) {
+                proc_inst_id
+                invoice
+                sku_toko
+                quantity_order
+              }
+            }`,
             variables: {
               proc_inst_id: [proc_inst_id],
             },
@@ -501,149 +660,6 @@ import("camunda-external-task-client-js").then(
         }
 
         const orders = ordersData[0].graph.mo_order_shop;
-        console.log("orders", orders);
-        const items = [];
-
-        for (const order of orders) {
-          const rawSku = order.sku_toko;
-          const sku_toko = rawSku.split("-")[0]; // Parsing: ambil sebelum "-"
-          const quantity_convert = order.quantity_convert;
-          console.log("order", order, "parsed sku_toko:", sku_toko);
-
-          // Cari semua lokasi yang cocok
-          const locationResponse = await axios.get(
-            `${process.env.SERVER_INVENTREE
-            }/api/stock/location/?name=${encodeURIComponent(sku_toko)}`,
-            {
-              headers: {
-                Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-              },
-            }
-          );
-
-          // console.log("locationResponse", locationResponse.data);
-
-          const locations = locationResponse.data.results || [];
-
-          if (!locations || locations.length === 0) {
-            console.warn(`❗ Lokasi tidak ditemukan untuk SKU: ${sku_toko}`);
-            continue;
-          }
-
-          for (const location of locations) {
-            const pkLocation = location.pk;
-
-            // Ambil semua stok di lokasi tersebut
-            const stockResponse = await axios.get(
-              `${process.env.SERVER_INVENTREE}/api/stock/?location=${pkLocation}&cascade=false`,
-              {
-                headers: {
-                  Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-                },
-              }
-            );
-
-            // console.log("stockResponse", stockResponse.data);
-
-            const stockItems = stockResponse.data.results || [];
-
-            if (!stockItems || stockItems.length === 0) {
-              console.warn(`❗ Tidak ada stok di lokasi PK: ${pkLocation}`);
-              continue;
-            }
-
-            // Tambahkan semua stok item ke daftar items
-            for (const stockItem of stockItems) {
-              items.push({
-                pk: stockItem.pk,
-                quantity: quantity_convert, // Gunakan quantity_convert
-              });
-            }
-          }
-        }
-
-        if (items.length === 0) {
-          throw new Error("Tidak ada item yang bisa dikurangi dari stok.");
-        }
-
-        // Payload pengurangan stok
-        const payload = {
-          items,
-          notes: `Order Invoice ${invoice}`,
-        };
-
-        // Kirim permintaan ke InvenTree
-        const removeStockResponse = await axios.post(
-          `${process.env.SERVER_INVENTREE}/api/stock/remove/`,
-          payload,
-          {
-            headers: {
-              Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-              "Content-Type": "application/json",
-            },
-          }
-        );
-
-        // console.log("✅ Pengurangan stok berhasil:", removeStockResponse.data);
-        await taskService.complete(task);
-        // console.log(`✅ Task ${task.id} berhasil diselesaikan.`);
-      } catch (error) {
-        if (error.response) {
-          console.error(
-            "❌ Gagal memproses task:",
-            error.response.status,
-            error.response.data
-          );
-        } else {
-          console.error("❌ Gagal memproses task:", error.message);
-        }
-      }
-    });
-
-    client.subscribe("Add_Stock", async function ({ task, taskService }) {
-      console.log("Task Dijalankan:", task.id);
-
-      try {
-        const proc_inst_id = task.processInstanceId;
-        const invoice = task.variables.get("invoice");
-
-        // 1. Ambil data pesanan dari GraphQL
-        const dataQuery = {
-          graph: {
-            method: "query",
-            endpoint: GRAPHQL_API,
-            gqlQuery: `query MyQuery($proc_inst_id: [String!]) {
-			  mo_order_shop(where: {proc_inst_id: {_in: $proc_inst_id}, picked_status: {_eq: "picked"}}) {
-			    proc_inst_id
-			    invoice
-			    sku_toko
-			    quantity_order
-			    picked_status
-			  }
-			}
-`,
-            variables: {
-              proc_inst_id: [proc_inst_id],
-            },
-          },
-          query: [],
-        };
-
-        const responseQuery = await configureQuery(fastify, dataQuery);
-        const ordersData = responseQuery.data;
-        // console.log("ordersData", ordersData);
-
-        if (
-          !ordersData ||
-          ordersData.length === 0 ||
-          !ordersData[0].graph.mo_order_shop.length
-        ) {
-          throw new Error(
-            "Data pesanan tidak ditemukan untuk proc_inst_id: " + proc_inst_id
-          );
-        }
-
-        const orders = ordersData[0].graph.mo_order_shop;
         const items = [];
 
         for (const order of orders) {
@@ -651,7 +667,8 @@ import("camunda-external-task-client-js").then(
 
           // Cari semua lokasi yang cocok
           const locationResponse = await axios.get(
-            `${process.env.SERVER_INVENTREE
+            `${
+              process.env.SERVER_INVENTREE
             }/api/stock/location/?name=${encodeURIComponent(sku_toko)}`,
             {
               headers: {
@@ -745,7 +762,7 @@ import("camunda-external-task-client-js").then(
         const proc_inst_id = task.processInstanceId;
 
         console.log("⏳ Menunggu 10 detik sebelum memproses task...");
-        await new Promise(resolve => setTimeout(resolve, 10000));
+        await new Promise((resolve) => setTimeout(resolve, 10000));
         console.log("✅ Delay selesai, memulai pemrosesan...");
 
         // Ambil data dropship
@@ -776,7 +793,9 @@ import("camunda-external-task-client-js").then(
           ordersData.length === 0 ||
           !ordersData[0].graph.mo_dropship.length
         ) {
-          throw new Error("Data pesanan tidak ditemukan untuk proc_inst_id: " + proc_inst_id);
+          throw new Error(
+            "Data pesanan tidak ditemukan untuk proc_inst_id: " + proc_inst_id
+          );
         }
 
         const orders = ordersData[0].graph.mo_dropship;
@@ -790,7 +809,9 @@ import("camunda-external-task-client-js").then(
           try {
             // Cari lokasi sesuai SKU
             const locationResponse = await axios.get(
-              `${process.env.SERVER_INVENTREE}/api/stock/location/?name=${encodeURIComponent(sku)}`,
+              `${
+                process.env.SERVER_INVENTREE
+              }/api/stock/location/?name=${encodeURIComponent(sku)}`,
               {
                 headers: {
                   Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
@@ -829,7 +850,10 @@ import("camunda-external-task-client-js").then(
               }
             }
 
-            console.log(`🔍 Hasil pencarian part_pk untuk SKU ${sku}:`, foundPartPk);
+            console.log(
+              `🔍 Hasil pencarian part_pk untuk SKU ${sku}:`,
+              foundPartPk
+            );
 
             // Jalankan mutation, part_pk bisa null kalau tidak ditemukan
             const dataUpdate = {
@@ -866,7 +890,9 @@ import("camunda-external-task-client-js").then(
           }
         }
 
-        console.log(`✅ Selesai memproses task. Berhasil: ${successCount}, Gagal: ${failCount}`);
+        console.log(
+          `✅ Selesai memproses task. Berhasil: ${successCount}, Gagal: ${failCount}`
+        );
 
         if (successCount > 0) {
           await taskService.complete(task);
@@ -874,9 +900,11 @@ import("camunda-external-task-client-js").then(
         } else {
           throw new Error("Semua SKU gagal diproses, task tidak di-complete.");
         }
-
       } catch (error) {
-        console.error("❌ Terjadi kesalahan saat memproses task:", error.message);
+        console.error(
+          "❌ Terjadi kesalahan saat memproses task:",
+          error.message
+        );
         await taskService.handleFailure(task, {
           errorMessage: error.message,
           errorDetails: error.stack,
@@ -897,19 +925,19 @@ import("camunda-external-task-client-js").then(
             method: "query",
             endpoint: GRAPHQL_API,
             gqlQuery: `
-                    query MyQuery($proc_inst_id: [String!]) {
-                      mo_dropship(where: {
-                        proc_inst_id: { _in: $proc_inst_id }
-                      }) {
-                        part_pk
-                        invoice
-                        resi
-                        sku
-                        quantity
-                        courier_name
-                      }
-                    }
-                  `,
+          query MyQuery($proc_inst_id: [String!]) {
+            mo_dropship(where: {
+              proc_inst_id: { _in: $proc_inst_id }
+            }) {
+              part_pk
+              invoice
+              resi
+              sku
+              quantity
+              courier_name
+            }
+          }
+        `,
             variables: {
               proc_inst_id: instance_dropship,
             },
@@ -936,7 +964,6 @@ import("camunda-external-task-client-js").then(
         for (const order of orders) {
           const { part_pk, invoice, resi, sku, quantity, courier_name } = order;
 
-          // --- Ambil detail part ---
           const getName = await axios.get(
             `${process.env.SERVER_INVENTREE}/api/part/${encodeURIComponent(
               part_pk
@@ -956,58 +983,34 @@ import("camunda-external-task-client-js").then(
             continue;
           }
 
-          // --- Ambil location berdasarkan sku ---
-          const getLocationId = await axios.get(
-            `${process.env.SERVER_INVENTREE}/api/stock/location/?name=${encodeURIComponent(
-              sku
-            )}`,
-            {
-              headers: {
-                Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-              },
-            }
-          );
-
-          const locationData = getLocationId.data;
-
-          if (!locationData || !locationData.results || locationData.results.length === 0) {
-            console.warn(`❗ Lokasi dengan name=${sku} tidak ditemukan`);
-            continue;
-          }
-
-          const locationId = locationData.results[0];
-
-          // --- Insert ke mo_order_shop ---
           const insertShopQuery = {
             graph: {
               method: "mutate",
               endpoint: GRAPHQL_API,
               gqlQuery: `
-                      mutation MyMutation(
-                        $proc_inst_id: String!,
-                        $sku: String!,
-                        $quantity: Int!,
-                        $invoice: String!,
-                        $resi: String!,
-                        $product_name: String!,
-                        $part_pk: Int!,
-                        $stock_item_id: Int!
-                      ) {
-                        insert_mo_order_shop(objects: {
-                          proc_inst_id: $proc_inst_id,
-                          product_name: $product_name,
-                          invoice: $invoice,
-                          resi: $resi,
-                          sku_toko: $sku,
-                          quantity_order: $quantity,
-                          part_pk: $part_pk,
-                          quantity_convert: $quantity,
-                          stock_item_id: $stock_item_id
-                        }) {
-                          affected_rows
-                        }
-                      }
-                    `,
+            mutation MyMutation(
+              $proc_inst_id: String!,
+              $sku: String!,
+              $quantity: Int!,
+              $invoice: String!,
+              $resi: String!,
+              $product_name: String!,
+              $part_pk: Int!
+            ) {
+              insert_mo_order_shop(objects: {
+                proc_inst_id: $proc_inst_id,
+                product_name: $product_name,
+                invoice: $invoice,
+                resi: $resi,
+                sku_toko: $sku,
+                quantity_order: $quantity,
+                part_pk: $part_pk,
+                quantity_convert: $quantity
+              }) {
+                affected_rows
+              }
+            }
+          `,
               variables: {
                 proc_inst_id: proc_inst_id,
                 product_name: partDetail.full_name,
@@ -1016,7 +1019,6 @@ import("camunda-external-task-client-js").then(
                 quantity: quantity,
                 resi: resi,
                 part_pk: part_pk,
-                stock_item_id: locationId.pk, // hasil dari location
               },
             },
             query: [],
@@ -1026,33 +1028,33 @@ import("camunda-external-task-client-js").then(
           console.log("✅ Insert mo_order_shop result:", shopResult.data);
         }
 
-        // --- Insert ke mo_order hanya sekali setelah loop ---
-        const firstOrder = orders[0]; // ambil 1 data sebagai perwakilan
+        // Insert ke mo_order dilakukan hanya sekali setelah loop
+        const firstOrder = orders[0]; // ambil 1 data sebagai perwakilan (resi, invoice, dll)
         const insertOrderQuery = {
           graph: {
             method: "mutate",
             endpoint: GRAPHQL_API,
             gqlQuery: `
-                    mutation MyMutation(
-                      $proc_inst_id: String!,
-                      $invoice: String!,
-                      $resi: String!,
-                      $courier_name: String!
-                    ) {
-                      insert_mo_order(objects: {
-                        proc_inst_id: $proc_inst_id,
-                        invoice: $invoice,
-                        resi: $resi,
-                        courier_name: $courier_name,
-                        proc_def_key: "Mirorim_Operasional.Order",
-                        task_def_key: "Mirorim_Operasional.Order.Scan_Invoice",
-                        categorized_location: "-",
-                        status_mp: "-"
-                      }) {
-                        affected_rows
-                      }
-                    }
-                  `,
+          mutation MyMutation(
+            $proc_inst_id: String!,
+            $invoice: String!,
+            $resi: String!,
+            $courier_name: String!
+          ) {
+            insert_mo_order(objects: {
+              proc_inst_id: $proc_inst_id,
+              invoice: $invoice,
+              resi: $resi,
+              courier_name: $courier_name,
+              proc_def_key: "Mirorim_Operasional.Order",
+              task_def_key: "Mirorim_Operasional.Order.Scan_Invoice",
+              categorized_location: "-",
+              status_mp: "-"
+            }) {
+              affected_rows
+            }
+          }
+        `,
             variables: {
               proc_inst_id: proc_inst_id,
               invoice: firstOrder.invoice,
@@ -1083,13 +1085,14 @@ import("camunda-external-task-client-js").then(
       }
     });
 
-
     client.subscribe("Listing_Refill", async function ({ task, taskService }) {
       console.log("Task Listing_Refill Dijalankan:", task.id);
 
       try {
         // Ambil proc_inst_id dari task yang sedang berjalan
         const current_proc_inst_id = task.processInstanceId;
+        const businessKey = task.variables.get("business_key");
+        const gudangName = businessKey ? businessKey.split(":")[1] : "UNKNOWN";
 
         const dataQuery = {
           graph: {
@@ -1103,11 +1106,12 @@ import("camunda-external-task-client-js").then(
                   refill_type
                   proc_inst_id
                   created_at
+                  warehouse_sku
                 }
               }
             `,
             variables: {
-              proc_inst_id: current_proc_inst_id
+              proc_inst_id: current_proc_inst_id,
             },
           },
           query: [],
@@ -1115,74 +1119,64 @@ import("camunda-external-task-client-js").then(
 
         const responseQuery = await configureQuery(fastify, dataQuery);
         const refillData = responseQuery.data[0].graph.mo_refill;
-        console.log("🔍 responseQuery:", JSON.stringify(responseQuery.data[0].graph.mo_refill, null, 2));
+        console.log(
+          "🔍 responseQuery:",
+          JSON.stringify(responseQuery.data[0].graph.mo_refill, null, 2)
+        );
 
         console.log("📦 Data Refill ditemukan:", refillData.length);
 
-        // 2. Proses setiap data refill
-        for (const refill of refillData) {
-          try {
-            // Ambil business key dari Camunda untuk proc_inst_id dari mo_refill
-            const camundaResponse = await axios.get(
-              `http://36.50.112.247:8080/engine-rest/process-instance/${refill.proc_inst_id}`
-            );
+        try {
+          console.log("gudang uhuy", gudangName);
 
-            // Ekstrak warehouse dari business key
-            const businessKey = camundaResponse.data.businessKey;
-            const warehouse = businessKey.split(":")[0]; // Ambil bagian "GUDANG C"
+          // 3. Insert ke mo_refill_print dengan proc_inst_id dari current task
+          const refill = refillData[0];
+          if (!refill) {
+            console.log("⚠️ Tidak ada refill ditemukan, skip insert");
+          } else {
+            try {
+              const insertQuery = {
+                graph: {
+                  method: "mutate",
+                  endpoint: GRAPHQL_API,
+                  gqlQuery: `
+              mutation InsertRefillPrint($mo_refill_id: Int!, $sku_toko: String!, $sku_gudang: String!, $gudang: String!, $refill_type: String!, $proc_inst_id: String!, $created_at: timestamp!) {
+  insert_mo_refill_print(objects: {mo_refill_id: $mo_refill_id, sku_toko: $sku_toko, sku_gudang: $sku_gudang, gudang: $gudang, refill_type: $refill_type, proc_inst_id: $proc_inst_id, created_at: $created_at}) {
+    affected_rows
+  }
+}
+            `,
+                  variables: {
+                    mo_refill_id: refill.id,
+                    sku_toko: refill.sku,
+                    gudang: gudangName || "UNKNOWN",
+                    refill_type: refill.refill_type,
+                    proc_inst_id: current_proc_inst_id,
+                    created_at: refill.created_at,
+                    sku_gudang: refill.warehouse_sku || "UNKNOWN",
+                  },
+                },
+                query: [],
+              };
 
-            // 3. Insert ke mo_refill_print dengan proc_inst_id dari current task
-            const insertQuery = {
-              graph: {
-                method: "mutate",
-                endpoint: GRAPHQL_API,
-                gqlQuery: `
-                  mutation InsertRefillPrint(
-                    $mo_refill_id: Int!,
-                    $sku_toko: String!,
-                    $gudang: String!,
-                    $refill_type: String!,
-                    $proc_inst_id: String!,
-		    $created_at: timestamp!
-                  ) {
-                    insert_mo_refill_print_one(object: {
-                      mo_refill_id: $mo_refill_id,
-                      sku_toko: $sku_toko,
-                      gudang: $gudang,
-                      refill_type: $refill_type,
-                      proc_inst_id: $proc_inst_id,
-                      created_at: $created_at
-                    }) {
-                      proc_inst_id
-                    }
-                  }
-                `,
-                variables: {
-                  mo_refill_id: refill.id,
-                  sku_toko: refill.sku,
-                  gudang: warehouse,
-                  refill_type: refill.refill_type,
-                  proc_inst_id: current_proc_inst_id,
-                  created_at: refill.created_at
-                }
-              },
-              query: [],
-            };
-
-            const insertResponse = await configureQuery(fastify, insertQuery);
-            console.log("✅ Data berhasil diinsert:", insertResponse.data);
-
-          } catch (error) {
-            console.error(
-              `❌ Error memproses refill ID ${refill.id}:`,
-              error.message
-            );
+              const insertResponse = await configureQuery(fastify, insertQuery);
+              console.log(
+                "✅ Insert sukses:",
+                JSON.stringify(insertResponse.data[0].graph, null, 2)
+              );
+            } catch (error) {
+              console.error(`❌ Error insert refill:`, error.message);
+            }
           }
+        } catch (error) {
+          console.error(
+            `❌ Error memproses refill ID ${refill.id}:`,
+            error.message
+          );
         }
 
         await taskService.complete(task);
         console.log(`✅ Task ${task.id} berhasil diselesaikan`);
-
       } catch (error) {
         console.error("❌ Error dalam Listing_Refill service:", error);
         await taskService.handleFailure(task, {
@@ -1194,11 +1188,13 @@ import("camunda-external-task-client-js").then(
       }
     });
 
-    client.subscribe("Recomendation_SimpleAssembly", async function ({ task, taskService }) {
-      console.log("▶️ Task Dijalankan:", task.id);
+    client.subscribe(
+      "Recomendation_SimpleAssembly",
+      async function ({ task, taskService }) {
+        console.log("▶️ Task Dijalankan:", task.id);
 
-      try {
-        const queryText = `
+        try {
+          const queryText = `
           SELECT 
             part_part.id AS part_pk,
             part_part.name AS product_name,
@@ -1219,59 +1215,67 @@ import("camunda-external-task-client-js").then(
             SUM(stock_stockitem.quantity) = 0;
         `;
 
-        const { rows: parts } = await pool.query(queryText);
+          const { rows: parts } = await pool.query(queryText);
 
-        if (!parts.length) {
-          console.log("🚫 Tidak ada part Simple Assembly dengan stock 0 di TOKO.");
-          await taskService.complete(task);
-          return;
-        }
+          if (!parts.length) {
+            console.log(
+              "🚫 Tidak ada part Simple Assembly dengan stock 0 di TOKO."
+            );
+            await taskService.complete(task);
+            return;
+          }
 
-        // Fungsi bantu bikin timestamp lokal (tanpa timezone)
-        function getCurrentTimestamp() {
-          const now = new Date();
-          const pad = (n) => n.toString().padStart(2, '0');
-          const year = now.getFullYear();
-          const month = pad(now.getMonth() + 1);
-          const day = pad(now.getDate());
-          const hours = pad(now.getHours());
-          const minutes = pad(now.getMinutes());
-          const seconds = pad(now.getSeconds());
-          return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-        }
+          // Fungsi bantu bikin timestamp lokal (tanpa timezone)
+          function getCurrentTimestamp() {
+            const now = new Date();
+            const pad = (n) => n.toString().padStart(2, "0");
+            const year = now.getFullYear();
+            const month = pad(now.getMonth() + 1);
+            const day = pad(now.getDate());
+            const hours = pad(now.getHours());
+            const minutes = pad(now.getMinutes());
+            const seconds = pad(now.getSeconds());
+            return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+          }
 
-        for (const part of parts) {
-          const { part_pk, product_name, location_name } = part;
-          const business_key = `${location_name}:${product_name}:Recomendation`;
+          for (const part of parts) {
+            const { part_pk, product_name, location_name } = part;
+            const business_key = `${location_name}:${product_name}:Recomendation`;
 
-          try {
-            // Trigger proses baru
-            const response = await axios.post(`${CAMUNDA_API}engine-rest/process-definition/key/Mirorim_Operasional.Prepare/start`, {
-              variables: {
-                part_pk: { value: part_pk, type: "Integer" },
-                product_name: { value: product_name, type: "String" },
-                location_name: { value: location_name, type: "String" },
-                source: { value: "Recomendation_SimpleAssembly", type: "String" }
-              },
-              businessKey: business_key
-            });
+            try {
+              // Trigger proses baru
+              const response = await axios.post(
+                `${CAMUNDA_API}engine-rest/process-definition/key/Mirorim_Operasional.Prepare/start`,
+                {
+                  variables: {
+                    part_pk: { value: part_pk, type: "Integer" },
+                    product_name: { value: product_name, type: "String" },
+                    location_name: { value: location_name, type: "String" },
+                    source: {
+                      value: "Recomendation_SimpleAssembly",
+                      type: "String",
+                    },
+                  },
+                  businessKey: business_key,
+                }
+              );
 
-            const newProcInstId = response.data?.id;
+              const newProcInstId = response.data?.id;
 
-            if (!newProcInstId) {
-              console.warn("⚠️ Tidak ada instance ID baru yang dibuat.");
-              continue;
-            }
+              if (!newProcInstId) {
+                console.warn("⚠️ Tidak ada instance ID baru yang dibuat.");
+                continue;
+              }
 
-            console.log("🆕 Instance baru:", newProcInstId);
+              console.log("🆕 Instance baru:", newProcInstId);
 
-            const created_at = getCurrentTimestamp(); // format sesuai timestamp (tanpa zona waktu)
+              const created_at = getCurrentTimestamp(); // format sesuai timestamp (tanpa zona waktu)
 
-            const dataInsert = {
-              graph: {
-                method: "mutate",
-                endpoint: process.env.GRAPHQL_API,
-                gqlQuery: `
+              const dataInsert = {
+                graph: {
+                  method: "mutate",
+                  endpoint: process.env.GRAPHQL_API,
+                  gqlQuery: `
                   mutation InsertBuildOrder(
                     $part_id: Int!,
                     $sku_toko: String!,
@@ -1295,35 +1299,39 @@ import("camunda-external-task-client-js").then(
                     }
                   }
                 `,
-                variables: {
-                  part_id: part_pk,
-                  sku_toko: location_name,
-                  proc_inst_id: newProcInstId,
-                  date: created_at
-                }
-              },
-              query: []
-            };
+                  variables: {
+                    part_id: part_pk,
+                    sku_toko: location_name,
+                    proc_inst_id: newProcInstId,
+                    date: created_at,
+                  },
+                },
+                query: [],
+              };
 
-            const responseInsert = await configureQuery(fastify, dataInsert);
-            const insertResult = responseInsert?.data?.graph?.insert_mo_prepare_build_order;
-
-          } catch (err) {
-            console.error("❌ Gagal proses:", err.response?.data || err.message);
+              const responseInsert = await configureQuery(fastify, dataInsert);
+              const insertResult =
+                responseInsert?.data?.graph?.insert_mo_prepare_build_order;
+            } catch (err) {
+              console.error(
+                "❌ Gagal proses:",
+                err.response?.data || err.message
+              );
+            }
           }
-        }
 
-        await taskService.complete(task);
-      } catch (err) {
-        console.error("❌ Error utama:", err.message);
-        await taskService.handleFailure(task, {
-          errorMessage: err.message,
-          errorDetails: err.stack,
-          retries: 0,
-          retryTimeout: 1000
-        });
+          await taskService.complete(task);
+        } catch (err) {
+          console.error("❌ Error utama:", err.message);
+          await taskService.handleFailure(task, {
+            errorMessage: err.message,
+            errorDetails: err.stack,
+            retries: 0,
+            retryTimeout: 1000,
+          });
+        }
       }
-    });
+    );
 
     client.subscribe("Build_Order", async function ({ task, taskService }) {
       console.log("🚀 Task Dijalankan:", task.id);
@@ -1357,14 +1365,18 @@ import("camunda-external-task-client-js").then(
           query: [],
         });
 
-        const orders = responseQuery?.data?.[0]?.graph?.mo_prepare_build_order || [];
-        if (orders.length === 0) throw new Error(`❌ Tidak ada order ditemukan`);
+        const orders =
+          responseQuery?.data?.[0]?.graph?.mo_prepare_build_order || [];
+        if (orders.length === 0)
+          throw new Error(`❌ Tidak ada order ditemukan`);
 
         for (const order of orders) {
           const { part_id, quantity } = order;
 
           // Generate reference Build Order
-          const { data: buildList } = await inventree.get("/build/?limit=1&ordering=-pk");
+          const { data: buildList } = await inventree.get(
+            "/build/?limit=1&ordering=-pk"
+          );
           const lastRef = buildList.results?.[0]?.reference || "BO-0000";
           const nextNumber = parseInt(lastRef.split("-")[1] || "0") + 1;
           const reference = `BO-${nextNumber.toString().padStart(4, "0")}`;
@@ -1379,7 +1391,9 @@ import("camunda-external-task-client-js").then(
           const buildId = buildRes.data.pk;
 
           // GET Build Lines
-          const { data: buildLineRes } = await inventree.get(`/build/line/?build=${buildId}`);
+          const { data: buildLineRes } = await inventree.get(
+            `/build/line/?build=${buildId}`
+          );
           const buildLines = buildLineRes.results;
 
           if (!buildLines || buildLines.length === 0) {
@@ -1398,9 +1412,15 @@ import("camunda-external-task-client-js").then(
               continue;
             }
 
-            const stockItems = await fetchStockItemsForPart(part_id, sub_part_id, line_qty);
+            const stockItems = await fetchStockItemsForPart(
+              part_id,
+              sub_part_id,
+              line_qty
+            );
             if (stockItems.length === 0) {
-              console.warn(`⚠️ Tidak ada stok tersedia untuk sub_part_id ${sub_part_id}`);
+              console.warn(
+                `⚠️ Tidak ada stok tersedia untuk sub_part_id ${sub_part_id}`
+              );
               continue;
             }
 
@@ -1451,7 +1471,9 @@ import("camunda-external-task-client-js").then(
             });
             console.log(`✅ Allocation Sukses untuk Build ID: ${buildId}`);
           } else {
-            console.warn(`⚠️ Tidak ada item yang dialokasikan untuk Build ID: ${buildId}`);
+            console.warn(
+              `⚠️ Tidak ada item yang dialokasikan untuk Build ID: ${buildId}`
+            );
           }
 
           // Simpan build_id ke tabel mo_prepare_build_order
@@ -1476,14 +1498,17 @@ import("camunda-external-task-client-js").then(
             query: [],
           });
 
-          console.log(`🔄 build_id ${buildId} disimpan untuk instance ${proc_inst_id}`);
+          console.log(
+            `🔄 build_id ${buildId} disimpan untuk instance ${proc_inst_id}`
+          );
         }
 
         await taskService.complete(task);
         console.log("🎉 Task Selesai");
       } catch (error) {
         console.error("❌ Error:", error.message);
-        if (error.response?.data) console.log("🧾 Detail:", error.response.data);
+        if (error.response?.data)
+          console.log("🧾 Detail:", error.response.data);
 
         await taskService.handleFailure(task, {
           errorMessage: error.message,
@@ -1494,7 +1519,11 @@ import("camunda-external-task-client-js").then(
       }
 
       // ✅ Fungsi ambil stock berdasarkan part_bomitem.sub_part_id
-      async function fetchStockItemsForPart(parent_part_id, sub_part_id, totalQtyNeeded) {
+      async function fetchStockItemsForPart(
+        parent_part_id,
+        sub_part_id,
+        totalQtyNeeded
+      ) {
         try {
           const query = `
             SELECT
@@ -1512,7 +1541,10 @@ import("camunda-external-task-client-js").then(
             ORDER BY stock_stockitem.updated ASC
           `;
 
-          const { rows } = await pool.query(query, [parent_part_id, sub_part_id]);
+          const { rows } = await pool.query(query, [
+            parent_part_id,
+            sub_part_id,
+          ]);
 
           const result = [];
           let remaining = totalQtyNeeded;
@@ -1564,10 +1596,14 @@ import("camunda-external-task-client-js").then(
         };
 
         const responseQuery = await configureQuery(fastify, dataQuery);
-        const buildOrders = responseQuery?.data?.[0]?.graph?.mo_prepare_build_order || [];
+        const buildOrders =
+          responseQuery?.data?.[0]?.graph?.mo_prepare_build_order || [];
 
         if (buildOrders.length === 0) {
-          throw new Error("❌ Data mo_prepare_build_order tidak ditemukan untuk processInstanceId: " + proc_inst_id);
+          throw new Error(
+            "❌ Data mo_prepare_build_order tidak ditemukan untuk processInstanceId: " +
+              proc_inst_id
+          );
         }
 
         for (const order of buildOrders) {
@@ -1580,7 +1616,9 @@ import("camunda-external-task-client-js").then(
 
           // POST ke /issue/ untuk mengeluarkan stok
           const issueResponse = await axios.post(
-            `${process.env.SERVER_INVENTREE}/api/build/${encodeURIComponent(build_id)}/issue/`,
+            `${process.env.SERVER_INVENTREE}/api/build/${encodeURIComponent(
+              build_id
+            )}/issue/`,
             {},
             {
               headers: {
@@ -1594,9 +1632,58 @@ import("camunda-external-task-client-js").then(
 
         await taskService.complete(task);
         console.log("✅ Task Selesai:", task.id);
-
       } catch (error) {
-        console.error("❌ Terjadi kesalahan saat memproses task:", error.message);
+        console.error(
+          "❌ Terjadi kesalahan saat memproses task:",
+          error.message
+        );
+        await taskService.handleFailure(task, {
+          errorMessage: error.message,
+          errorDetails: error.stack,
+          retries: 0,
+          retryTimeout: 1000,
+        });
+      }
+    });
+
+    client.subscribe("testingFunction", async function ({ task, taskService }) {
+      console.log("🚀 Task Dijalankan:", task.id);
+
+      try {
+        const proc_inst_id = task.processInstanceId;
+        const location_id = task.variables.get("locationPk");
+        const stock_id = task.variables.get("stockPk");
+        const part_id = task.variables.get("partPk");
+        const quantity = task.variables.get("quantity");
+        const notesAdd = "Penambahan stok";
+        const notesRemove = "Pengurangan stok";
+        const notesCount = "Penghitungan ulang stok";
+        const notesTransfer = "Transfer stok";
+        const notesMerge = "Penggabungan stok";
+        const notesTrack = "Riwayat stok";
+        console.log(location_id, stock_id, part_id, quantity);
+
+        const stockAdd = await addStock(stock_id, quantity, notesAdd);
+        const stockRemove = await removeStock(stock_id, quantity, notesRemove);
+        const stockCount = await countStock(stock_id, quantity, notesCount);
+        const stockTrack = await trackStock(stock_id, notesTrack);
+        const stockTransfer = await transferStock(
+          stock_id,
+          quantity,
+          location_id,
+          notesTransfer
+        );
+        const stockMerge = await mergeStock(part_id, location_id, notesMerge);
+
+        // console.log(stockAdd);
+
+        // await taskService.complete(task);
+        console.log("✅ Task Selesai:", task.id);
+      } catch (error) {
+        console.error(
+          "❌ Terjadi kesalahan saat memproses task:",
+          error.message
+        );
         await taskService.handleFailure(task, {
           errorMessage: error.message,
           errorDetails: error.stack,
@@ -1638,19 +1725,27 @@ import("camunda-external-task-client-js").then(
         };
 
         const responseQuery = await configureQuery(fastify, dataQuery);
-        const buildOrders = responseQuery?.data?.[0]?.graph?.mo_prepare_build_order || [];
+        const buildOrders =
+          responseQuery?.data?.[0]?.graph?.mo_prepare_build_order || [];
 
         if (buildOrders.length === 0) {
-          throw new Error("❌ Data mo_prepare_build_order tidak ditemukan untuk processInstanceId: " + proc_inst_id);
+          throw new Error(
+            "❌ Data mo_prepare_build_order tidak ditemukan untuk processInstanceId: " +
+              proc_inst_id
+          );
         }
 
         for (const order of buildOrders) {
           const { quantity_output, build_id } = order;
-          console.log(`🔨 Build ID: ${build_id} | Output Quantity: ${quantity_output}`);
+          console.log(
+            `🔨 Build ID: ${build_id} | Output Quantity: ${quantity_output}`
+          );
 
           // Buat output hasil build
           const createOutput = await axios.post(
-            `${process.env.SERVER_INVENTREE}/api/build/${encodeURIComponent(build_id)}/create-output/`,
+            `${process.env.SERVER_INVENTREE}/api/build/${encodeURIComponent(
+              build_id
+            )}/create-output/`,
             { quantity: quantity_output },
             {
               headers: {
@@ -1662,7 +1757,9 @@ import("camunda-external-task-client-js").then(
 
           // Ambil output (pk) hasil build
           const selectOutput = await axios.get(
-            `${process.env.SERVER_INVENTREE}/api/stock/?build=${encodeURIComponent(build_id)}&in_stock=false`,
+            `${
+              process.env.SERVER_INVENTREE
+            }/api/stock/?build=${encodeURIComponent(build_id)}&in_stock=false`,
             {
               headers: {
                 Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
@@ -1673,7 +1770,9 @@ import("camunda-external-task-client-js").then(
           const outputItems = selectOutput.data?.results || [];
 
           if (outputItems.length === 0) {
-            throw new Error(`⚠️ Output hasil build untuk Build ID ${build_id} tidak ditemukan.`);
+            throw new Error(
+              `⚠️ Output hasil build untuk Build ID ${build_id} tidak ditemukan.`
+            );
           }
 
           for (const item of outputItems) {
@@ -1681,7 +1780,9 @@ import("camunda-external-task-client-js").then(
             console.log(`📦 Output ditemukan - PK: ${pk}`);
             // Complete build untuk setiap output
             const completeOutput = await axios.post(
-              `${process.env.SERVER_INVENTREE}/api/build/${encodeURIComponent(build_id)}/complete/`,
+              `${process.env.SERVER_INVENTREE}/api/build/${encodeURIComponent(
+                build_id
+              )}/complete/`,
               {
                 outputs: [
                   {
@@ -1703,7 +1804,9 @@ import("camunda-external-task-client-js").then(
 
           // Finish build
           const finishOutput = await axios.post(
-            `${process.env.SERVER_INVENTREE}/api/build/${encodeURIComponent(build_id)}/finish/`,
+            `${process.env.SERVER_INVENTREE}/api/build/${encodeURIComponent(
+              build_id
+            )}/finish/`,
             {},
             {
               headers: {
@@ -1716,9 +1819,11 @@ import("camunda-external-task-client-js").then(
 
         await taskService.complete(task);
         console.log("✅ Task Selesai:", task.id);
-
       } catch (error) {
-        console.error("❌ Terjadi kesalahan saat memproses task:", error.message);
+        console.error(
+          "❌ Terjadi kesalahan saat memproses task:",
+          error.message
+        );
         await taskService.handleFailure(task, {
           errorMessage: error.message,
           errorDetails: error.stack,
@@ -1728,24 +1833,26 @@ import("camunda-external-task-client-js").then(
       }
     });
 
-    client.subscribe("Complete_Build_Partial", async function ({ task, taskService }) {
-      console.log("🚀 Task Dijalankan:", task.id);
+    client.subscribe(
+      "Complete_Build_Partial",
+      async function ({ task, taskService }) {
+        console.log("🚀 Task Dijalankan:", task.id);
 
-      try {
-        const proc_inst_id = task.processInstanceId;
-        const location = task.variables.get("location");
-        const status = task.variables.get("status");
+        try {
+          const proc_inst_id = task.processInstanceId;
+          const location = task.variables.get("location");
+          const status = task.variables.get("status");
 
-        console.log("ℹ️ Process Instance ID:", proc_inst_id);
-        console.log("📍 Lokasi tujuan:", location);
-        console.log("🪪 Status custom:", status);
+          console.log("ℹ️ Process Instance ID:", proc_inst_id);
+          console.log("📍 Lokasi tujuan:", location);
+          console.log("🪪 Status custom:", status);
 
-        // 🔍 Ambil data build_id dari table mo_prepare_build_order_partial
-        const dataQuery = {
-          graph: {
-            method: "query",
-            endpoint: GRAPHQL_API,
-            gqlQuery: `
+          // 🔍 Ambil data build_id dari table mo_prepare_build_order_partial
+          const dataQuery = {
+            graph: {
+              method: "query",
+              endpoint: GRAPHQL_API,
+              gqlQuery: `
               query GetBuildOrder($proc_inst_id: [String!]) {
                 mo_prepare_build_order_partial(where: { proc_inst_id: { _in: $proc_inst_id } }) {
                   quantity_output
@@ -1753,105 +1860,126 @@ import("camunda-external-task-client-js").then(
                 }
               }
             `,
-            variables: {
-              proc_inst_id: [proc_inst_id],
+              variables: {
+                proc_inst_id: [proc_inst_id],
+              },
             },
-          },
-          query: [],
-        };
+            query: [],
+          };
 
-        const responseQuery = await configureQuery(fastify, dataQuery);
-        const buildOrders =
-          responseQuery?.data?.[0]?.graph?.mo_prepare_build_order_partial || [];
+          const responseQuery = await configureQuery(fastify, dataQuery);
+          const buildOrders =
+            responseQuery?.data?.[0]?.graph?.mo_prepare_build_order_partial ||
+            [];
 
-        if (buildOrders.length === 0) {
-          throw new Error("❌ Data mo_prepare_build_order_partial tidak ditemukan untuk processInstanceId: " + proc_inst_id);
-        }
-
-        for (const order of buildOrders) {
-          const { quantity_output, build_id } = order;
-          console.log(`🔨 Build ID: ${build_id} | Output Quantity: ${quantity_output}`);
-
-          // 🏗️ Buat output hasil build
-          const createOutput = await axios.post(
-            `${process.env.SERVER_INVENTREE}/api/build/${encodeURIComponent(build_id)}/create-output/`,
-            { quantity: quantity_output },
-            {
-              headers: {
-                Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-              },
-            }
-          );
-          console.log("✅ Output berhasil dibuat:", createOutput.data);
-
-          // 🔍 Ambil stock item hasil build
-          const selectOutput = await axios.get(
-            `${process.env.SERVER_INVENTREE}/api/stock/?build=${encodeURIComponent(build_id)}&in_stock=false`,
-            {
-              headers: {
-                Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-              },
-            }
-          );
-
-          const outputItems = selectOutput.data?.results || [];
-
-          if (outputItems.length === 0) {
-            throw new Error(`⚠️ Output hasil build untuk Build ID ${build_id} tidak ditemukan.`);
+          if (buildOrders.length === 0) {
+            throw new Error(
+              "❌ Data mo_prepare_build_order_partial tidak ditemukan untuk processInstanceId: " +
+                proc_inst_id
+            );
           }
 
-          for (const item of outputItems) {
-            const pk = item.pk;
-            console.log(`📦 Output ditemukan - PK: ${pk}`);
+          for (const order of buildOrders) {
+            const { quantity_output, build_id } = order;
+            console.log(
+              `🔨 Build ID: ${build_id} | Output Quantity: ${quantity_output}`
+            );
 
-            // ✅ Complete stock item hasil build
-            await axios.post(
-              `${process.env.SERVER_INVENTREE}/api/build/${encodeURIComponent(build_id)}/complete/`,
-              {
-                outputs: [
-                  {
-                    output: pk,
-                  },
-                ],
-                location: location,
-                status_custom_key: status,
-              },
+            // 🏗️ Buat output hasil build
+            const createOutput = await axios.post(
+              `${process.env.SERVER_INVENTREE}/api/build/${encodeURIComponent(
+                build_id
+              )}/create-output/`,
+              { quantity: quantity_output },
               {
                 headers: {
                   Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
                 },
               }
             );
-            console.log(`🎯 Output PK ${pk} berhasil di-complete.`);
+            console.log("✅ Output berhasil dibuat:", createOutput.data);
+
+            // 🔍 Ambil stock item hasil build
+            const selectOutput = await axios.get(
+              `${
+                process.env.SERVER_INVENTREE
+              }/api/stock/?build=${encodeURIComponent(
+                build_id
+              )}&in_stock=false`,
+              {
+                headers: {
+                  Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+                },
+              }
+            );
+
+            const outputItems = selectOutput.data?.results || [];
+
+            if (outputItems.length === 0) {
+              throw new Error(
+                `⚠️ Output hasil build untuk Build ID ${build_id} tidak ditemukan.`
+              );
+            }
+
+            for (const item of outputItems) {
+              const pk = item.pk;
+              console.log(`📦 Output ditemukan - PK: ${pk}`);
+
+              // ✅ Complete stock item hasil build
+              await axios.post(
+                `${process.env.SERVER_INVENTREE}/api/build/${encodeURIComponent(
+                  build_id
+                )}/complete/`,
+                {
+                  outputs: [
+                    {
+                      output: pk,
+                    },
+                  ],
+                  location: location,
+                  status_custom_key: status,
+                },
+                {
+                  headers: {
+                    Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+                  },
+                }
+              );
+              console.log(`🎯 Output PK ${pk} berhasil di-complete.`);
+            }
           }
+
+          await taskService.complete(task);
+          console.log("✅ Task Selesai:", task.id);
+        } catch (error) {
+          console.error(
+            "❌ Terjadi kesalahan saat memproses task:",
+            error.message
+          );
+          await taskService.handleFailure(task, {
+            errorMessage: error.message,
+            errorDetails: error.stack,
+            retries: 0,
+            retryTimeout: 1000,
+          });
         }
-
-        await taskService.complete(task);
-        console.log("✅ Task Selesai:", task.id);
-
-      } catch (error) {
-        console.error("❌ Terjadi kesalahan saat memproses task:", error.message);
-        await taskService.handleFailure(task, {
-          errorMessage: error.message,
-          errorDetails: error.stack,
-          retries: 0,
-          retryTimeout: 1000,
-        });
       }
-    });
+    );
 
-    client.subscribe("Get_Instance_Prepare", async function ({ task, taskService }) {
-      console.log("🚀 Task Dijalankan:", task.id);
+    client.subscribe(
+      "Get_Instance_Prepare",
+      async function ({ task, taskService }) {
+        console.log("🚀 Task Dijalankan:", task.id);
 
-      try {
-        const proc_inst_id = task.processInstanceId;
-        const parent_instance_id = task.variables.get("parent_instance_id");
+        try {
+          const proc_inst_id = task.processInstanceId;
+          const parent_instance_id = task.variables.get("parent_instance_id");
 
-        const response = await configureQuery(fastify, {
-          graph: {
-            method: "mutate",
-            endpoint: process.env.GRAPHQL_API,
-            gqlQuery: `
+          const response = await configureQuery(fastify, {
+            graph: {
+              method: "mutate",
+              endpoint: process.env.GRAPHQL_API,
+              gqlQuery: `
           mutation updatePartial($proc_inst_id: String!, $parent_instance_id: String!) {
             update_mo_prepare_build_order_partial(
               where: {
@@ -1867,30 +1995,38 @@ import("camunda-external-task-client-js").then(
             }
           }
         `,
-            variables: {
-              proc_inst_id,
-              parent_instance_id,
+              variables: {
+                proc_inst_id,
+                parent_instance_id,
+              },
             },
-          },
-          query: [],
-        });
+            query: [],
+          });
 
-        console.log(`🔄 proc_inst_id "${proc_inst_id}" disimpan ke partial order parent "${parent_instance_id}"`);
-        console.log("📊 response Hasura:", JSON.stringify(response.data, null, 2));
+          console.log(
+            `🔄 proc_inst_id "${proc_inst_id}" disimpan ke partial order parent "${parent_instance_id}"`
+          );
+          console.log(
+            "📊 response Hasura:",
+            JSON.stringify(response.data, null, 2)
+          );
 
-        await taskService.complete(task);
-        console.log("✅ Task Selesai:", task.id);
-
-      } catch (error) {
-        console.error("❌ Terjadi kesalahan saat memproses task:", error.message);
-        await taskService.handleFailure(task, {
-          errorMessage: error.message,
-          errorDetails: error.stack,
-          retries: 0,
-          retryTimeout: 1000,
-        });
+          await taskService.complete(task);
+          console.log("✅ Task Selesai:", task.id);
+        } catch (error) {
+          console.error(
+            "❌ Terjadi kesalahan saat memproses task:",
+            error.message
+          );
+          await taskService.handleFailure(task, {
+            errorMessage: error.message,
+            errorDetails: error.stack,
+            retries: 0,
+            retryTimeout: 1000,
+          });
+        }
       }
-    });
+    );
 
     client.subscribe("Trigger_Load", async function ({ task, taskService }) {
       try {
@@ -1898,21 +2034,23 @@ import("camunda-external-task-client-js").then(
 
         // Ambil businessKey dari proses induk
         const businessKey = task.variables.get("businessKey");
-        const type_ = task.variables.get("type_pesanan") || "";
         console.log(">> Business Key:", businessKey);
 
         // Kirim request ke proses Load_Data
-        const response = await axios.post(`${CAMUNDA_API}engine-rest/process-definition/key/Mirorim_Operasional.Load_Data/start`, {
-          variables: {
-            type_pesanan: { value: type_, type: "String" }
-          },
-          businessKey: businessKey
-        });
+        const response = await axios.post(
+          `${CAMUNDA_API}engine-rest/process-definition/key/Mirorim_Operasional.Load_Data/start`,
+          {
+            variables: {},
+            businessKey: businessKey,
+          }
+        );
 
         const newProcInstId = response.data.id;
         console.log(">> Proses Load_Data berhasil dijalankan:", newProcInstId);
 
-        const created_at = new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString();
+        const created_at = new Date(
+          Date.now() + 7 * 60 * 60 * 1000
+        ).toISOString();
 
         // Hanya insert proc_inst_id dan created_at ke load_data
         const dataInsert = {
@@ -1934,16 +2072,19 @@ import("camunda-external-task-client-js").then(
             `,
             variables: {
               proc_inst_id: newProcInstId,
-              date: created_at
-            }
+              date: created_at,
+            },
           },
-          query: []
+          query: [],
         };
 
         const responseInsert = await configureQuery(fastify, dataInsert);
         const insertResult = responseInsert?.data?.graph?.insert_mo_load_data;
 
-        console.log(">> Debug insert:", JSON.stringify(responseInsert, null, 2));
+        console.log(
+          ">> Debug insert:",
+          JSON.stringify(responseInsert, null, 2)
+        );
 
         await taskService.complete(task);
       } catch (err) {
@@ -1952,159 +2093,361 @@ import("camunda-external-task-client-js").then(
           errorMessage: "Gagal trigger Mirorim_Operasional.Load_Data",
           errorDetails: err.toString(),
           retries: 1,
-          retryTimeout: 5000
+          retryTimeout: 5000,
         });
       }
     });
 
-    client.subscribe("getInstanceRetur", async function ({ task, taskService }) {
+    client.subscribe("updateReturDone", async function ({ task, taskService }) {
       console.log("🚀 Task Dijalankan:", task.id);
-
-      // 🕒 Log sebelum menunggu
-      console.log("⏳ Menunggu 5 detik sebelum memproses task...");
-
-      // 🕐 Tunggu 5 detik sebelum mulai eksekusi
-      await new Promise(resolve => setTimeout(resolve, 5000));
-
-      // ✅ Log setelah menunggu
-      console.log("▶️ Mulai memproses task setelah 5 detik...");
-
-      try {
-        const inventree = axios.create({
-          baseURL: `${process.env.SERVER_INVENTREE}/api`,
-          headers: {
-            Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-            "Content-Type": "application/json",
-          },
-          timeout: 10000,
-        });
-
-        const proc_inst_id = task.processInstanceId;
-        let invoice = task.variables.get("invoice");
-        invoice = invoice.toString();
-        console.log("📦 Process:", proc_inst_id, "Invoice:", invoice);
-
-        const responseUpdate = await configureQuery(fastify, {
-          graph: {
-            method: "mutate",
-            endpoint: process.env.GRAPHQL_API,
-            gqlQuery: `
-                         mutation updateRetur($proc_inst_id: String!, $invoice: String!) {
-                             update_mo_retur_receive(
-                                 where: { invoice: { _eq: $invoice } }
-                                 _set: { proc_inst_id: $proc_inst_id }
-                             ) {
-                                 affected_rows
-                             }
-                         }
-                     `,
-            variables: { proc_inst_id, invoice },
-          },
-          query: [],
-        });
-
-        console.log(`✅ proc_inst_id "${proc_inst_id}" disimpan ke invoice "${invoice}"`);
-        console.log("📊 Response Hasura:", JSON.stringify(responseUpdate.data, null, 2));
-        console.log("🚀 Kirim query GraphQL dengan variable:", { invoice });
-
-        const responsePart = await configureQuery(fastify, {
-          graph: {
-            method: "query",
-            endpoint: process.env.GRAPHQL_API,
-            gqlQuery: `
-                         query GetReturParts($invoice: String!) {
-                             mo_retur(where: { invoice: { _eq: $invoice } }) {
-                                 part_pk
-                                 quantity_retur
-                             }
-                         }
-                     `,
-            variables: { invoice },
-          },
-          query: [],
-        });
-
-        console.log("📦 HASURA RAW RESPONSE:", JSON.stringify(responsePart.data, null, 2));
-
-        const returList = responsePart?.data?.[0]?.graph?.mo_retur || [];
-        console.log("📦 Data retur ditemukan:", returList.length);
-
-        for (const item of returList) {
-          const payload = {
-            part: item.part_pk,
-            quantity: item.quantity_retur,
-            batch: invoice,
-            location: 6217,
-          };
-
-          console.log("📤 Kirim ke InvenTree:", JSON.stringify(payload, null, 2));
-
-          const postResponse = await inventree.post("/stock/", payload);
-
-          // 🧾 Tambahkan log hasil response dari InvenTree
-          console.log("📥 Response dari InvenTree:");
-          console.log(`➡️ Status: ${postResponse.status}`);
-          console.log("➡️ Data:", JSON.stringify(postResponse.data, null, 2));
+      async function refundCreditNote(
+        creditNoteId,
+        refundDate,
+        amount,
+        invoice
+      ) {
+        console.log("Creating refud for creditNoteId: " + creditNoteId);
+        const data = {
+          from_account_id: 1000,
+          reference_no: invoice,
+          amount: amount,
+          date: refundDate,
+        };
+        try {
+          const response = await httpClient.post(
+            `/sales/credit_notes/${creditNoteId}/refund`,
+            data
+          );
+          if (response && response.status === 200) {
+            console.log("closed credit Note: " + creditNoteId);
+            return response.data; // Assuming the data is returned in the 'data' property
+          } else {
+            // console.error('Failed to create invoice, status:', response.status);
+            throw new Error("Invoice creation failed");
+          }
+        } catch (error) {
+          console.error("Error creating invoice:");
+          throw error; // Rethrow the error to propagate it
         }
-
-        await taskService.complete(task);
-        console.log("✅ Task Selesai:", task.id);
-      } catch (error) {
-        console.error("❌ Terjadi kesalahan saat memproses task:", error.message);
-        await taskService.handleFailure(task, {
-          errorMessage: error.message,
-          errorDetails: error.stack,
-          retries: 0,
-          retryTimeout: 1000,
-        });
       }
-    });
+      async function createCreditNote(
+        customerId,
+        creditNoteDate,
+        invoice,
+        itemIds,
+        quantities,
+        sellPrice,
+        open
+      ) {
+        console.log("masuk invoice");
+        if (
+          !Array.isArray(itemIds) ||
+          !Array.isArray(quantities) ||
+          itemIds.length !== quantities.length ||
+          itemIds.length !== sellPrice.length
+        ) {
+          console.log("gagal");
 
-    client.subscribe("getInstanceClosing", async function ({ task, taskService }) {
-      console.log("🚀 Task Dijalankan:", task.id);
+          throw new Error(
+            "itemIds dan quantities harus array dengan panjang yang sama"
+          );
+        }
+        console.log("Creating invoice for customer: " + customerId);
+        const entries = itemIds.map((id, index) => ({
+          index: index + 1,
+          item_id: id,
+          quantity: quantities[index],
+          rate: sellPrice[index],
+        }));
+        const data = {
+          customer_id: customerId,
+          credit_note_date: creditNoteDate,
+          reference_no: invoice,
+          open: open || false,
+          entries: entries,
+        };
+        try {
+          const response = await httpClient.post("/sales/credit_notes", data);
+          if (response && response.status === 200) {
+            return response.data;
+          } else {
+            throw new Error("Invoice creation failed");
+          }
+        } catch (error) {
+          console.error("Error creating invoice:", error.message);
+          throw error; // Rethrow the error to propagate it
+        }
+      }
+      async function getInvoice(invoice) {
+        try {
+          const response = await httpClient.get(
+            `/sales/invoices?search_keyword=${invoice}`
+          );
+          const invoicedata = response.data.sales_invoices.find(
+            (i) => i.invoice_no === invoice
+          );
+          return invoicedata.sales_invoices[0];
+        } catch (error) {
+          console.error("❌ Gagal get invoice:", error);
+          throw error;
+        }
+      }
       try {
         const proc_inst_id = task.processInstanceId;
         const invoice = task.variables.get("invoice");
+        // 🧩 GraphQL Mutation untuk update status retur
+        const gqlMutation = `
+      mutation UpdateMoReturReceive($proc_inst_id: String!, $status: String) {
+        update_mo_retur_receive(
+          where: { proc_inst_id: { _eq: $proc_inst_id } },
+          _set: { task_def_key: $status }
+        ) {
+          affected_rows
+        }
+      }
+    `;
+
         const response = await configureQuery(fastify, {
           graph: {
             method: "mutate",
             endpoint: process.env.GRAPHQL_API,
-            gqlQuery: `
-                        mutation insert($proc_inst_id: String!, $invoice: String!) {
-                            insert_mo_order_closing(
-                                objects: {
-                                    proc_inst_id: $proc_inst_id,
-                                    invoice: $invoice
-                                }
-                            ) {
-                                affected_rows
-                            }
-                        }
-                    `,
+            gqlQuery: gqlMutation,
             variables: {
               proc_inst_id,
-              invoice,
+              status: "Completed",
             },
           },
           query: [],
         });
-        console.log(`🔄 proc_inst_id "${proc_inst_id}" disimpan ke invoice "${invoice}"`);
-        console.log("📊 response Hasura:", JSON.stringify(response.data, null, 2));
+
+        const hasil = response?.data?.graph?.update_mo_retur_receive;
+
+        if (!hasil || hasil.affected_rows === 0) {
+          console.warn(
+            `⚠️ Tidak ada baris yang diperbarui di mo_retur_receive untuk proc_inst_id ${proc_inst_id}`
+          );
+        } else {
+          console.log(
+            `✅ ${hasil.affected_rows} baris berhasil diperbarui di mo_retur_receive`
+          );
+        }
+        try {
+          const invoiceData = await getInvoice(invoice);
+          if (!invoiceData) {
+            throw new Error(`Invoice ${invoice} tidak ditemukan`);
+          }
+          // const customerId = invoiceData.customer_id;
+          // const creditNoteId = invoiceData.credit_note_id;
+          // const refundDate = new Date().toISOString().split('T')[0];
+          // const entries = [];
+
+          // for(invoiceEntries of invoiceData.entries){
+          //     entries.push({
+          //         id: invoiceEntries.id,
+          //         total: invoiceEntries.total,
+          //         rate: invoiceEntries.rate
+          //     });
+          // }
+          const gqlMutationRetur = `
+            query MyQuery($invoice: String!) {
+                mo_retur(where: {invoice: {_eq: $invoice}}) {
+                    invoice
+                    part_pk
+                    quantity_retur
+                    product_retur_date
+                }
+            }
+                `;
+          const response = await configureQuery(fastify, {
+            graph: {
+              method: "query",
+              endpoint: process.env.GRAPHQL_API,
+              gqlQuery: gqlMutationRetur,
+              variables: {
+                invoice,
+              },
+            },
+            query: [],
+          });
+
+          const hasil = response?.data?.graph?.update_mo_retur_receive;
+          const entries = filteredProducts.map((product, idx) => {
+            const matchedEntry = invoiceData.entries.find(
+              (e) => e.item_id === product.part_pk
+            );
+            return {
+              index: idx + 1,
+              item_id: product.part_pk,
+              quantity: product.quantity_retur,
+              rate: matchedEntry?.rate || 0,
+            };
+          });
+
+          const bigcapitalPayload = {
+            customer_id: item.marketplace,
+            credit_note_date: item.product_retur_date,
+            reference_no: item.invoice,
+            open: true,
+            entries,
+          };
+
+          let bigcapitalResult = null;
+          try {
+            const bigcapitalResponse = await axios.post(
+              `${BIGCAPITAL_API}/sales/credit_notes`,
+              bigcapitalPayload,
+              {
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-access-token": `${BIGCAPITAL_TOKEN}`,
+                  "organization-id": `${BIGCAPITAL_ORGANIZATION_ID}`,
+                },
+              }
+            );
+            bigcapitalResult = bigcapitalResponse.data;
+          } catch (err) {
+            console.error("Bigcapital API error:", err);
+            bigcapitalResult = { error: err.message };
+          }
+        } catch (error) {
+          throw new Error(`Error in bigcapital: ${error.message}`);
+        }
+        // ✅ Selesaikan task di Camunda
         await taskService.complete(task);
         console.log("✅ Task Selesai:", task.id);
       } catch (error) {
-        console.error("❌ Terjadi kesalahan saat memproses task:", error.message);
-        await taskService.handleFailure(task, {
+        console.error("❌ Error saat memproses task:", error.message);
+        await handleFailureDefault(task, {
           errorMessage: error.message,
           errorDetails: error.stack,
           retries: 0,
           retryTimeout: 1000,
         });
       }
-    }
+    });
+
+    client.subscribe(
+      "getInstanceRetur",
+      async function ({ task, taskService }) {
+        console.log("🚀 Task Dijalankan:", task.id);
+
+        // 🕒 Log sebelum menunggu
+        console.log("⏳ Menunggu 5 detik sebelum memproses task...");
+
+        // 🕐 Tunggu 5 detik sebelum mulai eksekusi
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        // ✅ Log setelah menunggu
+        console.log("▶️ Mulai memproses task setelah 5 detik...");
+
+        try {
+          const inventree = axios.create({
+            baseURL: `${process.env.SERVER_INVENTREE}/api`,
+            headers: {
+              Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+              "Content-Type": "application/json",
+            },
+            timeout: 10000,
+          });
+
+          const proc_inst_id = task.processInstanceId;
+          let invoice = task.variables.get("invoice");
+          invoice = invoice.toString();
+          console.log("📦 Process:", proc_inst_id, "Invoice:", invoice);
+
+          const responseUpdate = await configureQuery(fastify, {
+            graph: {
+              method: "mutate",
+              endpoint: process.env.GRAPHQL_API,
+              gqlQuery: `
+                    mutation updateRetur($proc_inst_id: String!, $invoice: String!) {
+                        update_mo_retur_receive(
+                            where: { invoice: { _eq: $invoice } }
+                            _set: { proc_inst_id: $proc_inst_id }
+                        ) {
+                            affected_rows
+                        }
+                    }
+                `,
+              variables: { proc_inst_id, invoice },
+            },
+            query: [],
+          });
+
+          console.log(
+            `✅ proc_inst_id "${proc_inst_id}" disimpan ke invoice "${invoice}"`
+          );
+          console.log(
+            "📊 Response Hasura:",
+            JSON.stringify(responseUpdate.data, null, 2)
+          );
+          console.log("🚀 Kirim query GraphQL dengan variable:", { invoice });
+
+          const responsePart = await configureQuery(fastify, {
+            graph: {
+              method: "query",
+              endpoint: process.env.GRAPHQL_API,
+              gqlQuery: `
+                    query GetReturParts($invoice: String!) {
+                        mo_retur(where: { invoice: { _eq: $invoice } }) {
+                            part_pk
+                            quantity_retur
+                        }
+                    }
+                `,
+              variables: { invoice },
+            },
+            query: [],
+          });
+
+          console.log(
+            "📦 HASURA RAW RESPONSE:",
+            JSON.stringify(responsePart.data, null, 2)
+          );
+
+          const returList = responsePart?.data?.[0]?.graph?.mo_retur || [];
+          console.log("📦 Data retur ditemukan:", returList.length);
+
+          for (const item of returList) {
+            const payload = {
+              part: item.part_pk,
+              quantity: item.quantity_retur,
+              batch: invoice,
+              location: 6039,
+            };
+
+            console.log(
+              "📤 Kirim ke InvenTree:",
+              JSON.stringify(payload, null, 2)
+            );
+
+            const postResponse = await inventree.post("/stock/", payload);
+
+            // 🧾 Tambahkan log hasil response dari InvenTree
+            console.log("📥 Response dari InvenTree:");
+            console.log(`➡️ Status: ${postResponse.status}`);
+            console.log("➡️ Data:", JSON.stringify(postResponse.data, null, 2));
+          }
+
+          await taskService.complete(task);
+          console.log("✅ Task Selesai:", task.id);
+        } catch (error) {
+          console.error(
+            "❌ Terjadi kesalahan saat memproses task:",
+            error.message
+          );
+          await taskService.handleFailure(task, {
+            errorMessage: error.message,
+            errorDetails: error.stack,
+            retries: 0,
+            retryTimeout: 1000,
+          });
+        }
+      }
     );
 
-    client.subscribe("getInstanceManufacture",
+    client.subscribe(
+      "getInstanceManufacture",
       async function ({ task, taskService }) {
         console.log("🚀 Task Dijalankan:", task.id);
 
@@ -2117,17 +2460,17 @@ import("camunda-external-task-client-js").then(
               method: "mutate",
               endpoint: process.env.GRAPHQL_API,
               gqlQuery: `
-                    mutation updateManufacture($proc_inst_id: String!, $parent_inst_id: String!) {
-                      update_manufacture_request(
-                        where: { parent_inst_id: { _eq: $parent_inst_id } }
-                        _set: {
-                          proc_inst_id: $proc_inst_id
-                        }
-                      ) {
-                        affected_rows
-                      }
-                    }
-                  `,
+            mutation updateManufacture($proc_inst_id: String!, $parent_inst_id: String!) {
+              update_manufacture_request(
+                where: { parent_inst_id: { _eq: $parent_inst_id } }
+                _set: {
+                  proc_inst_id: $proc_inst_id
+                }
+              ) {
+                affected_rows
+              }
+            }
+          `,
               variables: {
                 proc_inst_id,
                 parent_inst_id,
@@ -2158,7 +2501,8 @@ import("camunda-external-task-client-js").then(
       }
     );
 
-    client.subscribe("getParentManufacture",
+    client.subscribe(
+      "getParentManufacture",
       async function ({ task, taskService }) {
         console.log("🚀 Task Dijalankan:", task.id);
 
@@ -2176,18 +2520,18 @@ import("camunda-external-task-client-js").then(
               method: "mutate",
               endpoint: process.env.GRAPHQL_API,
               gqlQuery: `
-                    mutation updateManufacture($parent_inst_id: String!, $reference: String!, $status: String!) {
-                      update_manufacture_request(
-                        where: { reference: { _eq: $reference } }
-                        _set: {
-                          parent_inst_id: $parent_inst_id,
-                          status: $status
-                        }
-                      ) {
-                        affected_rows
-                      }
-                    }
-                  `,
+            mutation updateManufacture($parent_inst_id: String!, $reference: String!, $status: String!) {
+              update_manufacture_request(
+                where: { reference: { _eq: $reference } }
+                _set: {
+                  parent_inst_id: $parent_inst_id,
+                  status: $status
+                }
+              ) {
+                affected_rows
+              }
+            }
+          `,
               variables: {
                 reference,
                 parent_inst_id,
@@ -2219,7 +2563,77 @@ import("camunda-external-task-client-js").then(
       }
     );
 
-    client.subscribe("generate_prebuild_order",
+    client.subscribe("PurchaseWIP", async function ({ task, taskService }) {
+      console.log("Auto-completing Task:", task.id);
+
+      try {
+        const invoice = task.variables.get("invoice_supplier");
+        const proc_inst_id = task.processInstanceId;
+        console.log("🚀 Process Instance ID:", invoice);
+
+        // Query GraphQL untuk ambil order berdasarkan invoice
+        const dataQuery = {
+          graph: {
+            method: "query",
+            endpoint: GRAPHQL_API,
+            gqlQuery: `
+          query MyQuery($invoice: String!) {
+            mp_order(where: {invoice: {_eq: $invoice}}) {
+              mp_order_to_mp_products {
+                part_pk
+                quantity_order
+              }
+            }
+          }
+        `,
+            variables: {
+              invoice: invoice,
+            },
+          },
+          query: [],
+        };
+
+        // TODO: panggil configureQuery atau axios POST ke Hasura GraphQL
+        const response = await configureQuery(fastify, dataQuery);
+        console.log("Response GraphQL:", JSON.stringify(response, null, 2));
+
+        const products =
+          response?.data?.[0]?.graph?.mp_order?.[0]?.mp_order_to_mp_products ||
+          [];
+        console.log("produkkkkkk", products);
+
+        // Client Inventree
+        const inventree = axios.create({
+          baseURL: `${process.env.SERVER_INVENTREE}/api`,
+          headers: {
+            Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          timeout: 10000,
+        });
+
+        // Looping insert ke Inventree stock
+        for (const product of products) {
+          const payload = {
+            part: product.part_pk,
+            quantity: product.quantity_order,
+            batch: new Date().toISOString().split("T")[0], // format YYYY-MM-DD
+            location: 6007,
+          };
+
+          await inventree.post("/stock/", payload);
+          console.log(`📦 Stock ditambahkan:`, payload);
+        }
+
+        // Selesaikan task
+        await taskService.complete(task);
+      } catch (error) {
+        console.error("❌ Gagal menyelesaikan task:", error.message);
+      }
+    });
+
+    client.subscribe(
+      "generate_prebuild_order",
       async function ({ task, taskService }) {
         console.log("🚀 Task Dijalankan:", task.id);
 
@@ -2246,12 +2660,12 @@ import("camunda-external-task-client-js").then(
               method: "query",
               endpoint: process.env.GRAPHQL_API,
               gqlQuery: `
-                  query FetchBuildOrder($proc_inst_id: String!) {
-                    item_recommendations(where: { proc_inst_id: { _eq: $proc_inst_id } }) {
-                      part_id
-                      id
-                    }
-                  }`,
+          query FetchBuildOrder($proc_inst_id: String!) {
+            item_recommendations(where: { proc_inst_id: { _eq: $proc_inst_id } }) {
+              part_id
+              id
+            }
+          }`,
               variables: { proc_inst_id },
             },
             query: [],
@@ -2330,21 +2744,21 @@ import("camunda-external-task-client-js").then(
                 method: "mutate",
                 endpoint: process.env.GRAPHQL_API,
                 gqlQuery: `
-                    mutation MyMutation(
-                      $recomendation_id: Int!,
-                      $part_id: Int!,
-                      $reference: String!,
-                      $created_at: timestamp!
-                    ) {
-                      insert_manufacture_request(objects: {
-                        part_id: $part_id,
-                        recomendation_id: $recomendation_id,
-                        reference: $reference,
-                        created_at: $created_at
-                      }) {
-                        affected_rows
-                      }
-                    }`,
+            mutation MyMutation(
+              $recomendation_id: Int!,
+              $part_id: Int!,
+              $reference: String!,
+              $created_at: timestamp!
+            ) {
+              insert_manufacture_request(objects: {
+                part_id: $part_id,
+                recomendation_id: $recomendation_id,
+                reference: $reference,
+                created_at: $created_at
+              }) {
+                affected_rows
+              }
+            }`,
                 variables: data,
               },
               query: [],
@@ -2384,7 +2798,8 @@ import("camunda-external-task-client-js").then(
       }
     );
 
-    client.subscribe("generate_build_manufacture",
+    client.subscribe(
+      "generate_build_manufacture",
       async function ({ task, taskService }) {
         console.log("🚀 Task Dijalankan:", task.id);
 
@@ -2424,15 +2839,15 @@ import("camunda-external-task-client-js").then(
           // 🔄 GraphQL update status
           const graphqlMutation = {
             query: `
-                  mutation UpdateManufactureRequestStatus($parent_inst_id: String!) {
-                    update_manufacture_request(
-                      where: { parent_inst_id: { _eq: $parent_inst_id } }
-                      _set: { status: "waiting request" }
-                    ) {
-                      affected_rows
-                    }
-                  }
-                `,
+                      mutation UpdateManufactureRequestStatus($parent_inst_id: String!) {
+                        update_manufacture_request(
+                          where: { parent_inst_id: { _eq: $parent_inst_id } }
+                          _set: { status: "waiting request" }
+                        ) {
+                          affected_rows
+                        }
+                      }
+                    `,
             variables: {
               parent_inst_id,
             },
@@ -2463,238 +2878,275 @@ import("camunda-external-task-client-js").then(
       }
     );
 
-    client.subscribe("transfer_stock_manufacture", async function ({ task, taskService }) {
-      console.log("🚀 Task Dijalankan:", task.id);
+    client.subscribe(
+      "transfer_stock_manufacture",
+      async function ({ task, taskService }) {
+        console.log("🚀 Task Dijalankan:", task.id);
 
-      const inventree = axios.create({
-        baseURL: `${process.env.SERVER_INVENTREE}/api`,
-        headers: {
-          Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        timeout: 10000,
-      });
-
-      try {
-        const proc_inst_id = task.processInstanceId;
-
-        // 🔹 1. Ambil Manufacture Request
-        const responseQuery = await configureQuery(fastify, {
-          graph: {
-            method: "query",
-            endpoint: process.env.GRAPHQL_API,
-            gqlQuery: `
-                          query FetchBuildOrder($proc_inst_id: String!) {
-                            manufacture_request(where: { proc_inst_id: { _eq: $proc_inst_id } }) {
-                              id
-                              reference
-                            }
-                          }`,
-            variables: { proc_inst_id },
+        const inventree = axios.create({
+          baseURL: `${process.env.SERVER_INVENTREE}/api`,
+          headers: {
+            Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+            "Content-Type": "application/json",
           },
+          timeout: 10000,
         });
 
-        const orders = responseQuery?.data?.[0]?.graph?.manufacture_request || [];
-        if (orders.length === 0) throw new Error(`❌ Tidak ada manufacture_request untuk proc_inst_id: ${proc_inst_id}`);
+        try {
+          const proc_inst_id = task.processInstanceId;
 
-        const reference = orders[0]?.reference;
-        if (!reference) throw new Error("❌ Reference tidak ditemukan");
-
-        // 🔹 2. Ambil Build ID dari InvenTree
-        const { data: buildData } = await inventree.get(`/build/?reference=${encodeURIComponent(reference)}`);
-        const idInventree = buildData?.results?.[0]?.pk;
-        if (!idInventree) throw new Error("❌ Build Order tidak ditemukan");
-        console.log(`✅ Build ID: ${idInventree}`);
-
-        for (const order of orders) {
-          const buildOrderId = order.id;
-
-          // 🔹 3. Ambil Picking Items
-          const getPickingItem = await configureQuery(fastify, {
+          // 🔹 1. Ambil Manufacture Request
+          const responseQuery = await configureQuery(fastify, {
             graph: {
               method: "query",
               endpoint: process.env.GRAPHQL_API,
               gqlQuery: `
-                            query FetchPickingItems($id: Int!) {
-                              manufacture_picking_items(where: { build_order_id: { _eq: $id } }) {
-                                stock_item_id
-                                quantity
-                                part_id
-                              }
-                            }`,
-              variables: { id: buildOrderId },
+              query FetchBuildOrder($proc_inst_id: String!) {
+                manufacture_request(where: { proc_inst_id: { _eq: $proc_inst_id } }) {
+                  id
+                  reference
+                }
+              }`,
+              variables: { proc_inst_id },
             },
           });
 
-          const pickingItems = getPickingItem?.data?.[0]?.graph?.manufacture_picking_items || [];
-          if (pickingItems.length === 0) {
-            console.warn(`⚠️ Tidak ada picking item untuk build order ID: ${buildOrderId}`);
-            continue;
-          }
+          const orders =
+            responseQuery?.data?.[0]?.graph?.manufacture_request || [];
+          if (orders.length === 0)
+            throw new Error(
+              `❌ Tidak ada manufacture_request untuk proc_inst_id: ${proc_inst_id}`
+            );
 
-          console.log(`🔄 Memproses build order ID: ${buildOrderId}`);
-          console.log("📦 Picking Items:", pickingItems);
+          const reference = orders[0]?.reference;
+          if (!reference) throw new Error("❌ Reference tidak ditemukan");
 
-          const itemsToAllocate = [];
+          // 🔹 2. Ambil Build ID dari InvenTree
+          const { data: buildData } = await inventree.get(
+            `/build/?reference=${encodeURIComponent(reference)}`
+          );
+          const idInventree = buildData?.results?.[0]?.pk;
+          if (!idInventree) throw new Error("❌ Build Order tidak ditemukan");
+          console.log(`✅ Build ID: ${idInventree}`);
 
-          for (const item of pickingItems) {
-            const { stock_item_id, quantity, part_id } = item;
-            const notesAdj = `Alokasikan Ke Produksi | Proc ID: ${proc_inst_id}`;
+          for (const order of orders) {
+            const buildOrderId = order.id;
 
-            // 🔍 Fungsi cek histori transfer
-            const checkHistory = async (itemPk, notes) => {
-              try {
-                const res = await inventree.get("/stock/track/", {
-                  params: { item: itemPk, search: notes },
-                });
-                return res?.data?.count > 0;
-              } catch (err) {
-                console.error("⚠️ Error checkHistory:", err.message);
-                return false;
-              }
-            };
+            // 🔹 3. Ambil Picking Items
+            const getPickingItem = await configureQuery(fastify, {
+              graph: {
+                method: "query",
+                endpoint: process.env.GRAPHQL_API,
+                gqlQuery: `
+                query FetchPickingItems($id: Int!) {
+                  manufacture_picking_items(where: { build_order_id: { _eq: $id } }) {
+                    stock_item_id
+                    quantity
+                    part_id
+                  }
+                }`,
+                variables: { id: buildOrderId },
+              },
+            });
 
-            const alreadyAdjusted = await checkHistory(stock_item_id, notesAdj);
+            const pickingItems =
+              getPickingItem?.data?.[0]?.graph?.manufacture_picking_items || [];
+            if (pickingItems.length === 0) {
+              console.warn(
+                `⚠️ Tidak ada picking item untuk build order ID: ${buildOrderId}`
+              );
+              continue;
+            }
 
-            // 🔁 Step 1: Transfer ke lokasi produksi (6003)
-            if (!alreadyAdjusted) {
-              const transferPayload = {
-                items: [
-                  {
-                    pk: Number(stock_item_id),
-                    quantity: quantity,
-                  },
-                ],
-                notes: notesAdj,
-                location: 6003, // Lokasi produksi
+            console.log(`🔄 Memproses build order ID: ${buildOrderId}`);
+            console.log("📦 Picking Items:", pickingItems);
+
+            const itemsToAllocate = [];
+
+            for (const item of pickingItems) {
+              const { stock_item_id, quantity, part_id } = item;
+              const notesAdj = `Alokasikan Ke Produksi | Proc ID: ${proc_inst_id}`;
+
+              // 🔍 Fungsi cek histori transfer
+              const checkHistory = async (itemPk, notes) => {
+                try {
+                  const res = await inventree.get("/stock/track/", {
+                    params: { item: itemPk, search: notes },
+                  });
+                  return res?.data?.count > 0;
+                } catch (err) {
+                  console.error("⚠️ Error checkHistory:", err.message);
+                  return false;
+                }
               };
 
-              console.log("📦 Melakukan transfer:", notesAdj);
-              await inventree.post("/stock/transfer/", transferPayload);
-              console.log(`✅ Transfer berhasil untuk stock_item_id: ${stock_item_id}`);
+              const alreadyAdjusted = await checkHistory(
+                stock_item_id,
+                notesAdj
+              );
 
-              const decimalPart = quantity % 1;
-              if (decimalPart > 0) {
-                const removeAmount = Number((1 - decimalPart).toFixed(2));
-                console.log(`🧾 Remove kecil: ${removeAmount}`);
-                const removePayload = {
+              // 🔁 Step 1: Transfer ke lokasi produksi (6003)
+              if (!alreadyAdjusted) {
+                const transferPayload = {
                   items: [
                     {
                       pk: Number(stock_item_id),
-                      quantity: removeAmount.toFixed(2),
+                      quantity: quantity,
                     },
                   ],
-                  notes: `Pembulatan Sisa Komponen | ${proc_inst_id}`,
+                  notes: notesAdj,
+                  location: 6003, // Lokasi produksi
                 };
-                try {
-                  const resRemove = await inventree.post(
-                    "/stock/remove/",
-                    removePayload
-                  );
-                  console.log(
-                    "✅ Remove berhasil:",
-                    JSON.stringify(resRemove.data, null, 2)
-                  );
-                } catch (err) {
-                  console.error(
-                    "❌ Gagal remove:",
-                    err.response?.data || err.message
-                  );
+
+                console.log("📦 Melakukan transfer:", notesAdj);
+                await inventree.post("/stock/transfer/", transferPayload);
+                console.log(
+                  `✅ Transfer berhasil untuk stock_item_id: ${stock_item_id}`
+                );
+
+                const decimalPart = quantity % 1;
+                if (decimalPart > 0) {
+                  const removeAmount = Number((1 - decimalPart).toFixed(2));
+                  console.log(`🧾 Remove kecil: ${removeAmount}`);
+                  const removePayload = {
+                    items: [
+                      {
+                        pk: Number(stock_item_id),
+                        quantity: removeAmount.toFixed(2),
+                      },
+                    ],
+                    notes: `Pembulatan Sisa Komponen | ${proc_inst_id}`,
+                  };
+                  try {
+                    const resRemove = await inventree.post(
+                      "/stock/remove/",
+                      removePayload
+                    );
+                    console.log(
+                      "✅ Remove berhasil:",
+                      JSON.stringify(resRemove.data, null, 2)
+                    );
+                  } catch (err) {
+                    console.error(
+                      "❌ Gagal remove:",
+                      err.response?.data || err.message
+                    );
+                  }
+                }
+              } else {
+                console.log(
+                  "⏩ Adjustment sudah pernah dilakukan, skip transfer."
+                );
+              }
+
+              // 🔁 Step 2: Ambil stock item terbaru dari lokasi produksi
+              console.log(
+                "🔍 Fetching stock for part:",
+                part_id,
+                "at location:",
+                6003
+              );
+
+              const stockRes = await inventree.get(
+                `/stock/?part=${part_id}&location=6003&available=true&ordering=-updated&limit=1`
+              );
+
+              const newStockItem = stockRes?.data?.results?.[0];
+              if (!newStockItem) {
+                console.warn(
+                  `⚠️ Tidak menemukan stock item baru setelah transfer untuk stock_item_id: ${stock_item_id}`
+                );
+                continue;
+              }
+
+              // 🔁 Step 3: Ambil build lines
+              const { data: buildLineRes } = await inventree.get(
+                `/build/line/?build=${idInventree}`
+              );
+              const buildLines = buildLineRes?.results || [];
+              if (buildLines.length === 0) {
+                console.warn("⚠️ Build line kosong");
+                continue;
+              }
+
+              // 🔁 Step 4: Alokasikan stock ke build line yang cocok
+              for (const line of buildLines) {
+                const sub_part_id = line.bom_item_detail?.sub_part;
+                const line_qty = line.quantity;
+                if (!sub_part_id || !line_qty) continue;
+
+                if (sub_part_id === newStockItem.part) {
+                  itemsToAllocate.push({
+                    build_line: line.pk,
+                    stock_item: newStockItem.pk,
+                    quantity: quantity.toString(),
+                  });
+                  break;
                 }
               }
+            }
+
+            // 🔁 Step 5: Jalankan alokasi (sekali saja per buildOrder)
+            if (itemsToAllocate.length > 0) {
+              await inventree.post(`/build/${idInventree}/allocate/`, {
+                items: itemsToAllocate,
+              });
+              console.log("✅ Alokasi selesai:", itemsToAllocate);
             } else {
-              console.log("⏩ Adjustment sudah pernah dilakukan, skip transfer.");
+              console.warn("⚠️ Tidak ada item untuk dialokasikan.");
             }
+          }
 
-            // 🔁 Step 2: Ambil stock item terbaru dari lokasi produksi
-            console.log("🔍 Fetching stock for part:", part_id, "at location:", 6003);
+          await taskService.complete(task);
+        } catch (error) {
+          // =======================
+          // ERROR HANDLER TERSTRUKTUR
+          // =======================
+          if (error.response) {
+            const errorData = {
+              status: error.response.status,
+              statusText: error.response.statusText,
+              url: error.config?.url,
+              method: error.config?.method,
+              data: error.response.data,
+            };
 
-            const stockRes = await inventree.get(
-              `/stock/?part=${part_id}&location=6003&available=true&ordering=-updated&limit=1`
+            console.error(
+              "❌ InvenTree API Error:",
+              JSON.stringify(errorData, null, 2)
             );
-
-            const newStockItem = stockRes?.data?.results?.[0];
-            if (!newStockItem) {
-              console.warn(`⚠️ Tidak menemukan stock item baru setelah transfer untuk stock_item_id: ${stock_item_id}`);
-              continue;
-            }
-
-            // 🔁 Step 3: Ambil build lines
-            const { data: buildLineRes } = await inventree.get(`/build/line/?build=${idInventree}`);
-            const buildLines = buildLineRes?.results || [];
-            if (buildLines.length === 0) {
-              console.warn("⚠️ Build line kosong");
-              continue;
-            }
-
-            // 🔁 Step 4: Alokasikan stock ke build line yang cocok
-            for (const line of buildLines) {
-              const sub_part_id = line.bom_item_detail?.sub_part;
-              const line_qty = line.quantity;
-              if (!sub_part_id || !line_qty) continue;
-
-              if (sub_part_id === newStockItem.part) {
-                itemsToAllocate.push({
-                  build_line: line.pk,
-                  stock_item: newStockItem.pk,
-                  quantity: quantity.toString(),
-                });
-                break;
-              }
-            }
-          }
-
-          // 🔁 Step 5: Jalankan alokasi (sekali saja per buildOrder)
-          if (itemsToAllocate.length > 0) {
-            await inventree.post(`/build/${idInventree}/allocate/`, { items: itemsToAllocate });
-            console.log("✅ Alokasi selesai:", itemsToAllocate);
+            await taskService.handleFailure(task, {
+              errorMessage: `InvenTree ${error.response.status} ${error.response.statusText}`,
+              errorDetails: JSON.stringify(errorData, null, 2),
+              retries: 0,
+              retryTimeout: 1000,
+            });
+          } else if (error.request) {
+            console.error(
+              "⚠️ Tidak ada respons dari InvenTree:",
+              error.request
+            );
+            await taskService.handleFailure(task, {
+              errorMessage: "Tidak ada respons dari InvenTree",
+              errorDetails: error.message,
+              retries: 0,
+              retryTimeout: 1000,
+            });
           } else {
-            console.warn("⚠️ Tidak ada item untuk dialokasikan.");
+            console.error("❌ Error:", error.message);
+            await taskService.handleFailure(task, {
+              errorMessage: error.message,
+              errorDetails: error.stack,
+              retries: 0,
+              retryTimeout: 1000,
+            });
           }
-        }
-
-        await taskService.complete(task);
-      } catch (error) {
-        // =======================
-        // ERROR HANDLER TERSTRUKTUR
-        // =======================
-        if (error.response) {
-          const errorData = {
-            status: error.response.status,
-            statusText: error.response.statusText,
-            url: error.config?.url,
-            method: error.config?.method,
-            data: error.response.data,
-          };
-
-          console.error("❌ InvenTree API Error:", JSON.stringify(errorData, null, 2));
-          await taskService.handleFailure(task, {
-            errorMessage: `InvenTree ${error.response.status} ${error.response.statusText}`,
-            errorDetails: JSON.stringify(errorData, null, 2),
-            retries: 0,
-            retryTimeout: 1000,
-          });
-        } else if (error.request) {
-          console.error("⚠️ Tidak ada respons dari InvenTree:", error.request);
-          await taskService.handleFailure(task, {
-            errorMessage: "Tidak ada respons dari InvenTree",
-            errorDetails: error.message,
-            retries: 0,
-            retryTimeout: 1000,
-          });
-        } else {
-          console.error("❌ Error:", error.message);
-          await taskService.handleFailure(task, {
-            errorMessage: error.message,
-            errorDetails: error.stack,
-            retries: 0,
-            retryTimeout: 1000,
-          });
         }
       }
-    });
+    );
 
-    client.subscribe("complete_build_manufacture",
+    client.subscribe(
+      "complete_build_manufacture",
       async function ({ task, taskService }) {
         console.log("🚀 Task Dijalankan:", task.id);
 
@@ -2796,13 +3248,13 @@ import("camunda-external-task-client-js").then(
             method: "query",
             endpoint: process.env.GRAPHQL_API,
             gqlQuery: `
-                            query taskWorker($proc_inst_id: String!) {
-                                task_worker(where: { proc_inst_id: { _eq: $proc_inst_id } }) {
-                                    part_pk
-                                    quantity_finish_qc
-                                    quantity_reject
-                                }
-                            }`,
+                                query taskWorker($proc_inst_id: String!) {
+                                    task_worker(where: { proc_inst_id: { _eq: $proc_inst_id } }) {
+                                        part_pk
+                                        quantity_finish_qc
+                                        quantity_reject
+                                    }
+                                }`,
             variables: { proc_inst_id },
           },
         });
@@ -2825,18 +3277,20 @@ import("camunda-external-task-client-js").then(
           part_pk: partId,
         } = fetchData;
 
+        console.log(fetchData);
+        console.log(reference);
+
         // Ambil Build ID
         const { data } = await inventree.get(
           `/build/?reference=${encodeURIComponent(reference)}`
         );
         const buildId = data?.results?.[0]?.pk;
+        console.log(`✅ Build ID ditemukan: ${buildId}`);
         if (!buildId) {
           throw new Error(
             `❌ Build Order dengan reference '${reference}' tidak ditemukan`
           );
         }
-
-        console.log(`✅ Build ID ditemukan: ${buildId}`);
 
         // Ambil tanggal hari ini (format YYYY-MM-DD)
         const today = new Date().toISOString().split("T")[0];
@@ -2854,7 +3308,11 @@ import("camunda-external-task-client-js").then(
 
         // Ambil stock item ID terbaru untuk part
         const stockResponse = await inventree.get(
-          `/stock/?part=${encodeURIComponent(partId)}&ordering=-updated&limit=1&offset=0&build=${encodeURIComponent(buildId)}`
+          `/stock/?part=${encodeURIComponent(
+            partId
+          )}&ordering=-updated&limit=1&offset=0&build=${encodeURIComponent(
+            buildId
+          )}`
         );
 
         const latestStockItem = stockResponse?.data?.results?.[0];
@@ -2865,22 +3323,21 @@ import("camunda-external-task-client-js").then(
         const stockItemId = latestStockItem.pk;
         console.log(`✅ Stock item ID ditemukan: ${stockItemId}`);
 
-
         // Update ke Hasura
         const responseMutation = await configureQuery(fastify, {
           graph: {
             method: "mutate",
             endpoint: process.env.GRAPHQL_API,
             gqlQuery: `
-                            mutation updateStockFinish($proc_inst_id: String!, $stockItemId: Int!) {
-                                update_task_worker(
-                                    where: { proc_inst_id: { _eq: $proc_inst_id } },
-                                    _set: { stock_item_id_finish: $stockItemId }
-                                ) {
-                                    affected_rows
+                                mutation updateStockFinish($proc_inst_id: String!, $stockItemId: Int!) {
+                                    update_task_worker(
+                                        where: { proc_inst_id: { _eq: $proc_inst_id } },
+                                        _set: { stock_item_id_finish: $stockItemId }
+                                    ) {
+                                        affected_rows
+                                    }
                                 }
-                            }
-                        `,
+                            `,
             variables: {
               proc_inst_id,
               stockItemId,
@@ -2908,7 +3365,9 @@ import("camunda-external-task-client-js").then(
           const stockResponseReject = await inventree.get(
             `/stock/?part=${encodeURIComponent(
               partId
-            )}&ordering=-updated&limit=1&offset=0&build=${encodeURIComponent(buildId)}`
+            )}&ordering=-updated&limit=1&offset=0&build=${encodeURIComponent(
+              buildId
+            )}`
           );
 
           const latestStockItemReject = stockResponseReject?.data?.results?.[0];
@@ -2924,15 +3383,15 @@ import("camunda-external-task-client-js").then(
               method: "mutate",
               endpoint: process.env.GRAPHQL_API,
               gqlQuery: `
-                        mutation updateStockReject($proc_inst_id: String!, $stockItemIdReject: Int!) {
-                            update_task_worker(
-                                where: { proc_inst_id: { _eq: $proc_inst_id } },
-                                _set: { stock_item_id_reject: $stockItemIdReject }
-                            ) {
-                                affected_rows
+                            mutation updateStockReject($proc_inst_id: String!, $stockItemIdReject: Int!) {
+                                update_task_worker(
+                                    where: { proc_inst_id: { _eq: $proc_inst_id } },
+                                    _set: { stock_item_id_reject: $stockItemIdReject }
+                                ) {
+                                    affected_rows
+                                }
                             }
-                        }
-                    `,
+                        `,
               variables: {
                 proc_inst_id,
                 stockItemIdReject,
@@ -2961,7 +3420,8 @@ import("camunda-external-task-client-js").then(
       }
     });
 
-    client.subscribe("getFlaggedComponents",
+    client.subscribe(
+      "getFlaggedComponents",
       async function ({ task, taskService }) {
         console.log("🚀 Task Dijalankan:", task.id);
 
@@ -2973,17 +3433,17 @@ import("camunda-external-task-client-js").then(
               method: "query",
               endpoint: process.env.GRAPHQL_API,
               gqlQuery: `
-                    query MyQuery($proc_inst_id: [String!]) {
-                      manufacture_request(where: {proc_inst_id: {_in: $proc_inst_id}}) {
-                        proc_inst_id
-                        manufacture_request_to_picking(where: {is_flagged: {_eq: true}}) {
-                          part_id
-                        }
-                      }
-                    }
-                  `,
-              variables: {
+            query MyQuery($proc_inst_id: [String!]) {
+              manufacture_request(where: {proc_inst_id: {_in: $proc_inst_id}}) {
                 proc_inst_id
+                manufacture_request_to_picking(where: {is_flagged: {_eq: true}}) {
+                  part_id
+                }
+              }
+            }
+          `,
+              variables: {
+                proc_inst_id,
               },
             },
             query: [],
@@ -2995,17 +3455,29 @@ import("camunda-external-task-client-js").then(
           );
 
           // Ambil array part_id dari response
-          const partIds = response.data?.manufacture_request?.flatMap(mr =>
-            mr.manufacture_request_to_picking.map(p => p.part_id)
-          ) || [];
+          const manufactureRequests =
+            response.data?.[0]?.graph?.manufacture_request || [];
+          console.log(
+            "🔎 Full manufactureRequests:",
+            JSON.stringify(manufactureRequests, null, 2)
+          );
+          const partIds = manufactureRequests.flatMap((mr) =>
+            mr.manufacture_request_to_picking.map((p) => p.part_id)
+          );
 
           console.log("📦 partIds yang dikirim ke Camunda:", partIds);
 
-          await taskService.complete(task, {
-            variables: {
-              components_pk: { value: partIds, type: "json" }, // pakai "json" agar array tetap terjaga
+          const variables = new Variables();
+          variables.setTyped("component_pk", {
+            value: JSON.stringify(partIds),
+            type: "Object",
+            valueInfo: {
+              serializationDataFormat: "application/json",
+              objectTypeName: "java.util.ArrayList",
             },
           });
+
+          await taskService.complete(task, variables);
         } catch (error) {
           console.error(
             "❌ Terjadi kesalahan saat memproses task:",
@@ -3049,30 +3521,30 @@ import("camunda-external-task-client-js").then(
             method: "mutate",
             endpoint: process.env.GRAPHQL_API,
             gqlQuery: `
-                            mutation insertSO(
-                                $proc_inst_id: String!,
-                                $part_id: Int!,
-                                $location_id: Int!,
-                                $type: String!,
-                                $ownership_scope: String!,
-                                $status: String!,
-                                $created_at: timestamp!
-                            ) {
-                                insert_stock_opname(
-                                    objects: {
-                                        proc_inst_id: $proc_inst_id,
-                                        part_id: $part_id,
-                                        location_id: $location_id,
-                                        type: $type,
-                                        ownership_scope: $ownership_scope,
-                                        status: $status,
-                                        created_at: $created_at
-                                    }
+                                mutation insertSO(
+                                    $proc_inst_id: String!,
+                                    $part_id: Int!,
+                                    $location_id: Int!,
+                                    $type: String!,
+                                    $ownership_scope: String!,
+                                    $status: String!,
+                                    $created_at: timestamp!
                                 ) {
-                                    affected_rows
+                                    insert_stock_opname(
+                                        objects: {
+                                            proc_inst_id: $proc_inst_id,
+                                            part_id: $part_id,
+                                            location_id: $location_id,
+                                            type: $type,
+                                            ownership_scope: $ownership_scope,
+                                            status: $status,
+                                            created_at: $created_at
+                                        }
+                                    ) {
+                                        affected_rows
+                                    }
                                 }
-                            }
-                        `,
+                            `,
             variables: {
               proc_inst_id,
               part_id,
@@ -3115,124 +3587,127 @@ import("camunda-external-task-client-js").then(
       }
     });
 
-    client.subscribe("ConvertQuantityInbound", async ({ task, taskService }) => {
-      console.log("🚀 TTask Inbound:", task.id);
-
-      try {
+    client.subscribe(
+      "generate_stock_opname_komponen",
+      async ({ task, taskService }) => {
         const inventree = axios.create({
           baseURL: `${process.env.SERVER_INVENTREE}/api`,
           headers: {
             Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+            "Content-Type": "application/json",
           },
           timeout: 10000,
         });
 
-        const proc_inst_id = task.processInstanceId;
-        const pack_gudang = task.variables.get("pack_gudang");
-        const pack_supplier = task.variables.get("pack_supplier");
-        const weight_per_unit = task.variables.get("weight_per_unit");
-        const unit_konversi = task.variables.get("unit_konversi");
-        const merge_decision_inbound = task.variables.get("merge_decision_inbound");
+        const componentPkRaw = task.variables.get("component_pk"); // "[2001043, 2000212]"
+        let components;
 
-        const merge = merge_decision_inbound === "BISA" ? true : false;
+        try {
+          components = JSON.parse(componentPkRaw);
+        } catch (err) {
+          console.error("❌ Gagal parse component_pk:", err.message);
+          return await handleFailureDefault(taskService, task, err);
+        }
+        console.log("components:", components);
 
-        // ambil data mi_products
-        const getInbound =
-          (
-            await configureQuery(fastify, {
-              graph: {
-                method: "query",
-                endpoint: process.env.GRAPHQL_API,
-                gqlQuery: `
-              query($proc_inst_id: String!) {
-                mi_products(where: { proc_inst_id: { _eq: $proc_inst_id } }) {
-                  part_pk 
-                  quantity_received 
-                  quantity_konversi 
-                  stock_item_id
-                }
+        try {
+          for (const componentId of components) {
+            // 1️⃣ Ambil location dari DB
+            const query = `
+        SELECT stock_stocklocation.id 
+        FROM stock_stocklocation
+        INNER JOIN stock_stockitem 
+          ON stock_stockitem.location_id = stock_stocklocation.id
+        WHERE stock_stockitem.part_id = $1
+          AND stock_stocklocation.description = 'GUDANG' 
+          AND stock_stockitem.consumed_by_id IS NULL 
+          AND stock_stockitem.status = '10'
+      `;
+            const responseGetLocation = await pool.query(query, [componentId]);
+            const locationIds = responseGetLocation.rows.map((r) => r.id);
+
+            console.log("locationnIds:", locationIds);
+
+            if (!locationIds.length) {
+              console.warn(
+                `⚠️ Tidak ada location_id untuk component ${componentId}`
+              );
+              continue;
+            }
+            const itemPart = await inventree.get(`/part/${componentId}/`);
+            const part_name = itemPart?.data?.name || "UNKNOWN";
+            console.log("part_name:", part_name);
+
+            for (const locId of locationIds) {
+              // Ambil nama location untuk tiap id
+              const itemLocation = await inventree.get(
+                `/stock/location/${locId}/`
+              );
+              if (!itemLocation || !itemLocation.data) {
+                console.warn(
+                  `⚠️ Data lokasi ${locId} tidak ditemukan di Inventree`
+                );
+                continue; // skip ke lokasi berikutnya
               }
-            `,
-                variables: { proc_inst_id },
-              },
-              query: [],
-            })
-          )?.data?.[0]?.graph?.mi_products || [];
+              const location_name = itemLocation?.data?.name || "UNKNOWN";
+              console.log("location_name:", location_name);
 
-        console.log("getInbound:", JSON.stringify(getInbound));
-
-        // helper upsert parameter
-        const upsertParameter = async (part_pk, template, value) => {
-          try {
-            const exist = await inventree.get(
-              `/part/parameter/?part=${part_pk}&template=${template}`
-            );
-            console.log("Cek exist:", JSON.stringify(exist.data, null, 2));
-
-            if (exist.data && exist.data.results && exist.data.results.length > 0) {
-              const paramId = exist.data.results[0].pk;
-              await inventree.patch(`/part/parameter/${paramId}/`, {
-                data: value,
+              const type = "Component Manufacture";
+              const ownership = "gudang";
+              const created_at = new Date().toLocaleString("sv-SE", {
+                timeZone: "Asia/Jakarta",
               });
-              console.log(`♻️ Update parameter ${paramId} (template=${template}) OK`);
-            } else {
-              await inventree.post("/part/parameter/", {
-                part: part_pk,
-                template,
-                data: value,
-              });
-              console.log(`✅ Insert parameter (template=${template}) OK`);
-            }
-          } catch (err) {
-            console.error(`❌ Gagal upsert parameter (template=${template}):`, err.message);
-            if (err.response?.data) {
-              console.error("Response data:", err.response.data);
-            }
-            throw err;
-          }
-        };
 
-        for (const row of getInbound) {
-          const { part_pk, quantity_received, quantity_konversi, stock_item_id } = row;
-          console.log(quantity_konversi, quantity_received, stock_item_id);
+              // 🔑 businessKey tetap unik per part + location
+              const businessKey = `${part_name}:${type}:${created_at}`;
 
-          if (quantity_konversi !== quantity_received) {
-            const payload = {
-              items: [
+              // Start instance baru
+              const response = await axios.post(
+                `${CAMUNDA_API}engine-rest/process-definition/key/Mirorim_Stock.Stock_Opname/start`,
                 {
-                  pk: stock_item_id,
-                  quantity: quantity_konversi,
-                },
-              ],
-              notes: `Konversi quantity supplier ke gudang | Proc inst ID: ${proc_inst_id}`,
-            };
-            console.log("📦 Payload Inventree:", payload);
-            await inventree.post("/stock/count/", payload);
+                  businessKey, // ini yg dipakai Camunda sebagai identifier instance
+                  variables: {
+                    part_id: { value: componentId, type: "String" },
+                    location_id: { value: locId, type: "String" },
+                    business_key: { value: location_name, type: "String" }, // ✅ isi variable pakai nama lokasi
+                    type: { value: type, type: "String" },
+                    ownership: { value: ownership, type: "String" },
+                    location_name: { value: location_name, type: "String" },
+                    part_name: { value: part_name, type: "String" },
+                    date: { value: created_at, type: "String" },
+                  },
+                }
+              );
+
+              const newProcInstId = response.data?.id;
+
+              if (!newProcInstId) {
+                console.warn("⚠️ Tidak ada instance ID baru yang dibuat.");
+                continue;
+              }
+
+              console.log("🆕 Instance baru:", newProcInstId);
+              console.log(
+                `✅ Start process untuk part ${componentId} di lokasi ${location_name} dengan businessKey ${businessKey}`
+              );
+            }
           }
 
-          await upsertParameter(part_pk, 2, JSON.stringify(weight_per_unit));
-          await upsertParameter(part_pk, 3, String(pack_gudang));
-          await upsertParameter(part_pk, 4, String(pack_supplier));
-          await upsertParameter(part_pk, 5, String(merge));
+          // await taskService.complete(task);
+        } catch (error) {
+          console.error(
+            "❌ Terjadi kesalahan saat memproses task:",
+            error.message
+          );
+          await taskService.handleFailure(task, {
+            errorMessage: error.message,
+            errorDetails: error.stack,
+            retries: 0,
+            retryTimeout: 1000,
+          });
         }
-
-        await taskService.complete(task);
-        console.log("✅ Task Selesai:", task.id);
-        // throw new Error("🔥 Error testing ConvertQuantityInbound");
-      } catch (err) {
-        console.error("❌ Error ConvertQuantityInbound:", err.message);
-        if (err.response?.data) {
-          console.error("Response data:", err.response.data);
-        }
-
-        await taskService.handleFailure(task, {
-          errorMessage: err.message,
-          errorDetails: err.stack,
-          retries: 0,
-          retryTimeout: 1000,
-        });
       }
-    });
+    );
 
     client.subscribe("Count_Stock", async function ({ task, taskService }) {
       console.log("🚀 Task Dijalankan:", task.id);
@@ -3278,157 +3753,8 @@ import("camunda-external-task-client-js").then(
       }
     });
 
-    client.subscribe("checkStockMutasi", async ({ task, taskService }) => {
-      console.log("🚀 Task Check Stock Mutasi Dijalankan:", task.id);
-
-      try {
-        const inventree = axios.create({
-          baseURL: `${process.env.SERVER_INVENTREE}/api`,
-          headers: {
-            Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-          },
-          timeout: 10000,
-        });
-
-        const proc_inst_id = task.processInstanceId;
-
-        // 🔹 Update mutasi_request ke completed
-        await configureQuery(fastify, {
-          graph: {
-            method: "mutate",
-            endpoint: process.env.GRAPHQL_API,
-            gqlQuery: `
-              mutation($proc_inst_id: String!, $status: String!) {
-                update_mutasi_request(
-                  where: { proc_inst_id: { _eq: $proc_inst_id } }
-                  _set: { status: $status }
-                ) { affected_rows }
-              }`,
-            variables: { proc_inst_id, status: "completed" },
-          },
-          query: [],
-        });
-
-        // 🔹 Ambil mutasi_request
-        const mutasiReq =
-          (
-            await configureQuery(fastify, {
-              graph: {
-                method: "query",
-                endpoint: process.env.GRAPHQL_API,
-                gqlQuery: `
-                query($proc_inst_id: String!) {
-                  mutasi_request(where: { proc_inst_id: { _eq: $proc_inst_id } }) {
-                    id part_id
-                  }
-                }`,
-                variables: { proc_inst_id },
-              },
-              query: [],
-            })
-          )?.data?.[0]?.graph?.mutasi_request || [];
-
-        if (!mutasiReq.length)
-          throw new Error("mutasi_request tidak ditemukan");
-
-        // 🔹 Ambil mutasi_request_detail
-        const details =
-          (
-            await configureQuery(fastify, {
-              graph: {
-                method: "query",
-                endpoint: process.env.GRAPHQL_API,
-                gqlQuery: `
-                query($ids: Int!) {
-                  mutasi_request_details(where: { request_id: { _eq: $ids } }) {
-                    type location_id quantity_physical quantity_data quantity_movement
-                  }
-                }`,
-                variables: { ids: mutasiReq[0].id },
-              },
-              query: [],
-            })
-          )?.data?.[0]?.graph?.mutasi_request_details || [];
-
-        if (!details.length) throw new Error("Mutasi detail kosong");
-
-        const [src, dest] = [
-          details.find((d) => d.type === "source"),
-          details.find((d) => d.type === "destination"),
-        ];
-
-        // 🔹 Tentukan mismatch
-        const mismatch =
-          src && dest && src.quantity_movement !== dest.quantity_movement
-            ? details
-            : details.filter((d) => d.quantity_physical !== d.quantity_data);
-
-        const isValid = mismatch.length === 0;
-
-        // 🔹 Ambil data produk
-        const product_name = (
-          await inventree.get(`/part/${mutasiReq[0].part_id}/`)
-        )?.data?.full_name;
-
-        // 🔹 Ambil location PK dari Inventree
-        const locationPks = await Promise.all(
-          mismatch.map(async (item) => {
-            try {
-              const res = await inventree.get(
-                `/stock/location/?name=${item.location_id}`
-              );
-              return res.data.results?.[0]?.pk || null;
-            } catch {
-              return null;
-            }
-          })
-        );
-
-        // 🔹 Format date (YYYY-MM-DD HH:mm:ss)
-        const pad = (n) => String(n).padStart(2, "0");
-        const now = new Date();
-        const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(
-          now.getDate()
-        )} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(
-          now.getSeconds()
-        )}`;
-
-        // 🔹 Kirim ke Camunda
-        const variables = new Variables();
-        variables.set("isValid", isValid);
-        variables.setTyped("location_ids", {
-          value: JSON.stringify(locationPks),
-          type: "Object",
-          valueInfo: {
-            serializationDataFormat: "application/json",
-            objectTypeName: "java.util.ArrayList",
-          },
-        });
-        variables.set("part_id", mutasiReq[0].part_id);
-        variables.set("type", "Mutasi");
-        variables.set("ownership", "gudang");
-        variables.set("date", date);
-        variables.set("product_name", product_name);
-
-        await taskService.complete(task, variables);
-        console.log("✅ Task selesai:", task.id);
-      } catch (err) {
-        console.error("❌ Error Check Stock Mutasi:", err.message);
-        if (err.response?.data)
-          console.error("Response data:", err.response.data);
-
-        await taskService.handleFailure(task, {
-          errorMessage: err.message,
-          errorDetails: err.stack,
-          retries: 0,
-          retryTimeout: 1000,
-        });
-      }
-    });
-
     client.subscribe("transferStockMutasi", async ({ task, taskService }) => {
       console.log("🚀 Task Transfer Stock Mutasi Dijalankan:", task.id);
-
       try {
         const inventree = axios.create({
           baseURL: `${process.env.SERVER_INVENTREE}/api`,
@@ -3439,57 +3765,98 @@ import("camunda-external-task-client-js").then(
         });
 
         const proc_inst_id = task.processInstanceId;
+        const idMutasi = task.variables.get("id");
+        console.log("proc_inst_id", proc_inst_id);
+        console.log("idMutasi", idMutasi);
 
-        const mutasiReq =
-          (
-            await configureQuery(fastify, {
-              graph: {
-                method: "query",
-                endpoint: process.env.GRAPHQL_API,
-                gqlQuery: `
-                query($proc_inst_id: String!) {
-                  mutasi_request(where: { proc_inst_id: { _eq: $proc_inst_id } }) {
-                    id
-                  }
-                }`,
-                variables: { proc_inst_id },
-              },
-              query: [],
-            })
-          )?.data?.[0]?.graph?.mutasi_request || [];
+        const responseQuery = await configureQuery(fastify, {
+          graph: {
+            method: "query",
+            endpoint: process.env.GRAPHQL_API,
+            gqlQuery: `
+                    query($proc_inst_id: String!) {
+                mutasi_request(where: { proc_inst_id: { _eq: $proc_inst_id } }) {
+                  id
+                  is_prepare_needed
+                  stock_item_id_wip
+                }
+              }`,
+            variables: { proc_inst_id },
+          },
+        });
 
-        if (!mutasiReq.length)
-          throw new Error(
-            "mutasi_request tidak ditemukan untuk proc_inst_id ini"
-          );
+        const request = responseQuery?.data?.[0]?.graph?.mutasi_request?.[0];
+        console.log("fetchh", JSON.stringify(request, null, 2));
+
+        const responseQueryDetails = await configureQuery(fastify, {
+          graph: {
+            method: "query",
+            endpoint: process.env.GRAPHQL_API,
+            gqlQuery: `
+                    query($ids: Int!) {
+                mutasi_request_details(where: { request_id: { _eq: $ids } }) {
+                  type
+                  location_id
+                  sku_id
+                  quantity_movement
+                }
+              }`,
+            variables: { ids: request.id },
+          },
+        });
 
         const details =
-          (
-            await configureQuery(fastify, {
-              graph: {
-                method: "query",
-                endpoint: process.env.GRAPHQL_API,
-                gqlQuery: `
-                query($ids: Int!) {
-                  mutasi_request_details(where: { request_id: { _eq: $ids } }) {
-                    type location_id sku_id quantity_movement
-                  }
-                }`,
-                variables: { ids: mutasiReq[0].id },
-              },
-              query: [],
-            })
-          )?.data?.[0]?.graph?.mutasi_request_details || [];
-
-        if (!details.length) throw new Error("Mutasi detail kosong");
+          responseQueryDetails?.data?.[0]?.graph?.mutasi_request_details;
+        console.log("fetchh detaillll", JSON.stringify(details, null, 2));
 
         const source = details.find((d) => d.type === "source");
         const destination = details.find((d) => d.type === "destination");
+
+        console.log("sourceee", source);
+        console.log("destination", destination);
 
         if (!source || !destination) {
           throw new Error("Source atau Destination tidak ditemukan");
         }
 
+        let stockItemPk = null;
+        // 🔎 kalau prepare = true → ambil dari prepare_internal_detail
+        if (request.is_prepare_needed) {
+          const responseQueryPrepare = await configureQuery(fastify, {
+            graph: {
+              method: "query",
+              endpoint: process.env.GRAPHQL_API,
+              gqlQuery: `query MyQuery($id: Int!) {
+                  prepare_internal(
+                    where: { reference_id: { _eq: $id }, reference_table: { _eq: "mutasi_request" } }
+                  ) {
+                    stock_item_id_master
+                    prepare_id_to_prepare_detail_id {
+                      stock_item_id
+                    }
+                  }
+                }`,
+              variables: { id: idMutasi },
+            },
+          });
+
+          const prepareData =
+            responseQueryPrepare?.data?.[0]?.graph
+              ?.prepare_id_to_prepare_internal_id;
+          console.log(
+            "fetchh prepareeee dataaa",
+            JSON.stringify(prepareData, null, 2)
+          );
+
+          if (!prepareData.length) {
+            throw new Error("prepare_internal_detail kosong");
+          }
+          stockItemPk = prepareData[0].stock_item_id;
+        } else {
+          stockItemPk = request.stock_item_wip || source.sku_id;
+        }
+
+        // 🔎 cek lokasi tujuan di InvenTree
         let destLocationPk = null;
         try {
           const res = await inventree.get(
@@ -3505,24 +3872,23 @@ import("camunda-external-task-client-js").then(
             `Lokasi tujuan ${destination.location_id} tidak ditemukan di Inventree`
           );
         }
-
+        // 📦 payload transfer
         const transferPayload = {
           items: [
             {
-              pk: source.sku_id, // pk stock asal
-              quantity: destination.quantity_movement, // jumlah yang dipindahkan
+              pk: stockItemPk, // pk stock asal
+              quantity: destination.quantity_movement, // jumlah dari detail mutasi
             },
           ],
           notes: `Mutasi Stock | Proc Inst ID: ${proc_inst_id}`,
-          location: destLocationPk, // pk lokasi tujuan
+          location: destLocationPk,
         };
 
         console.log("📦 Transfer Payload:", transferPayload);
-
         const res = await inventree.post(`/stock/transfer/`, transferPayload);
         console.log("✅ Transfer response:", res.data);
 
-        await taskService.complete(task);
+        // await taskService.complete(task);
         console.log("✅ Task selesai:", task.id);
       } catch (err) {
         console.error("❌ Error Transfer Stock Mutasi:", err.message);
@@ -3538,347 +3904,434 @@ import("camunda-external-task-client-js").then(
       }
     });
 
-    client.subscribe("Trigger_Bulanan", async function ({ task, taskService }) {
-      try {
-        console.log(">> Menerima task Trigger_Load");
+    client.subscribe(
+      "ConvertQuantityInbound",
+      async ({ task, taskService }) => {
+        console.log("🚀 TTask Inbound:", task.id);
 
-        const marketplaces = ["Tokopedia", "Shopee", "Lazada"];
-        const utc = new Date();
-        const wib = new Date(utc.getTime() + 7 * 60 * 60 * 1000); // UTC +7
-        const hhmmss = wib.toISOString().substring(11, 19); // ambil HH:MM:SS dari format ISO
+        try {
+          const inventree = axios.create({
+            baseURL: `${process.env.SERVER_INVENTREE}/api`,
+            headers: {
+              Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+            },
+            timeout: 10000,
+          });
 
-        for (const mp of marketplaces) {
+          const proc_inst_id = task.processInstanceId;
+          const pack_gudang = task.variables.get("pack_gudang");
+          const pack_supplier = task.variables.get("pack_supplier");
+          const weight_per_unit = task.variables.get("weight_per_unit");
+          const unit_konversi = task.variables.get("unit_konversi");
+          const merge_decision_inbound = task.variables.get(
+            "merge_decision_inbound"
+          );
 
-          const businessKey = `${mp}:Bulanan:${hhmmss}`;
-          console.log(`>> Memulai proses Load_Data untuk ${mp}`);
+          const merge = merge_decision_inbound === "BISA" ? true : false;
 
-          // Jalankan process Mirorim_Operasional.Load_Data
-          const response = await axios.post(
-            `${CAMUNDA_API}engine-rest/process-definition/key/Mirorim_Operasional.Load_Data/start`,
-            {
-              variables: {
-                load: { value: "bulanan", type: "String" },
-              },
-              businessKey: businessKey,
+          // ambil data mi_products
+          const getInbound =
+            (
+              await configureQuery(fastify, {
+                graph: {
+                  method: "query",
+                  endpoint: process.env.GRAPHQL_API,
+                  gqlQuery: `
+              query($proc_inst_id: String!) {
+                mi_products(where: { proc_inst_id: { _eq: $proc_inst_id } }) {
+                  part_pk 
+                  quantity_received 
+                  quantity_konversi 
+                  stock_item_id
+                }
+              }
+            `,
+                  variables: { proc_inst_id },
+                },
+                query: [],
+              })
+            )?.data?.[0]?.graph?.mi_products || [];
+
+          console.log("getInbound:", JSON.stringify(getInbound));
+
+          // helper upsert parameter
+          const upsertParameter = async (part_pk, template, value) => {
+            try {
+              const exist = await inventree.get(
+                `/part/parameter/?part=${part_pk}&template=${template}`
+              );
+              console.log("Cek exist:", JSON.stringify(exist.data, null, 2));
+
+              if (
+                exist.data &&
+                exist.data.results &&
+                exist.data.results.length > 0
+              ) {
+                const paramId = exist.data.results[0].pk;
+                await inventree.patch(`/part/parameter/${paramId}/`, {
+                  data: value,
+                });
+                console.log(
+                  `♻️ Update parameter ${paramId} (template=${template}) OK`
+                );
+              } else {
+                await inventree.post("/part/parameter/", {
+                  part: part_pk,
+                  template,
+                  data: value,
+                });
+                console.log(`✅ Insert parameter (template=${template}) OK`);
+              }
+            } catch (err) {
+              console.error(
+                `❌ Gagal upsert parameter (template=${template}):`,
+                err.message
+              );
+              if (err.response?.data) {
+                console.error("Response data:", err.response.data);
+              }
+              throw err;
             }
-          );
-
-          const newProcInstId = response.data.id;
-          console.log(`>> ${mp} - Proses Load_Data berhasil dijalankan:`, newProcInstId);
-
-          // Insert ke GraphQL
-          const created_at = new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString();
-          const dataInsert = {
-            graph: {
-              method: "mutate",
-              endpoint: process.env.GRAPHQL_API,
-              gqlQuery: `
-                        mutation InsertLoadData(
-                            $proc_inst_id: String!,
-                            $date: timestamp!,
-                            $load: String!
-                        ) {
-                            insert_mo_load_data(objects: {
-                                proc_inst_id: $proc_inst_id,
-                                created_at: $date,
-                                jenis_load: $load
-                            }) {
-                                affected_rows
-                            }
-                        }
-                    `,
-              variables: {
-                proc_inst_id: newProcInstId,
-                date: created_at,
-                load: "bulanan",
-              },
-            },
-            query: [],
           };
 
-          const responseInsert = await configureQuery(fastify, dataInsert);
-          console.log(`>> ${mp} - Insert result:`, JSON.stringify(responseInsert, null, 2));
-        }
+          for (const row of getInbound) {
+            const {
+              part_pk,
+              quantity_received,
+              quantity_konversi,
+              stock_item_id,
+            } = row;
+            console.log(quantity_konversi, quantity_received, stock_item_id);
 
-        // Selesaikan task setelah semua marketplace selesai
-        await taskService.complete(task);
-        console.log(">> Semua proses Load_Data selesai dijalankan");
+            if (quantity_konversi !== quantity_received) {
+              const payload = {
+                items: [
+                  {
+                    pk: stock_item_id,
+                    quantity: quantity_konversi,
+                  },
+                ],
+                notes: `Konversi quantity supplier ke gudang | Proc inst ID: ${proc_inst_id}`,
+              };
+              console.log("📦 Payload Inventree:", payload);
+              await inventree.post("/stock/count/", payload);
+            }
 
-      } catch (err) {
-        console.error(">> Gagal men-trigger Load_Data:", err.message);
-        await taskService.handleFailure(task, {
-          errorMessage: "Gagal trigger Mirorim_Operasional.Load_Data",
-          errorDetails: err.toString(),
-          retries: 1,
-          retryTimeout: 5000,
-        });
-      }
-    });
+            await upsertParameter(part_pk, 2, JSON.stringify(weight_per_unit));
+            await upsertParameter(part_pk, 3, String(pack_gudang));
+            await upsertParameter(part_pk, 4, String(pack_supplier));
+            await upsertParameter(part_pk, 5, String(merge));
+          }
 
-    client.subscribe("getInstanceGenericStaging", async function ({ task, taskService }) {
-      console.log("🚀 Task Dijalankan:", task.id);
+          await taskService.complete(task);
+          console.log("✅ Task Selesai:", task.id);
+          // throw new Error("🔥 Error testing ConvertQuantityInbound");
+        } catch (err) {
+          console.error("❌ Error ConvertQuantityInbound:", err.message);
+          if (err.response?.data) {
+            console.error("Response data:", err.response.data);
+          }
 
-      try {
-        const proc_inst_id = task.processInstanceId;
-        const request_detail_id = task.variables.get("id");
-        const type = task.variables.get("destination_type");
-        const location_id = task.variables.get("WIPLocation");
-        const table_reference = task.variables.get("table_reference");
-        const status = "unprocessed";
-        const now = new Date();
-        const created_at = new Date(now.getTime() + 7 * 60 * 60 * 1000)
-          .toISOString()
-          .replace("T", " ")
-          .replace("Z", "");
-        const checkQuery = {
-          graph: {
-            method: "query",
-            endpoint: process.env.GRAPHQL_API,
-            gqlQuery: `
-                            query CheckDeliveryStaging($proc_inst_id: String!) {
-                                delivery_staging(where: {proc_inst_id: {_eq: $proc_inst_id}}) {
-                                    id
-                                    proc_inst_id
-                                }
-                            }
-                        `,
-            variables: { proc_inst_id },
-          },
-        };
-        const checkResult = await configureQuery(fastify, checkQuery);
-        console.log(
-          "🔎 Hasil checkQuery:",
-          JSON.stringify(checkResult, null, 2)
-        );
-        const existing =
-          checkResult?.data?.[0]?.graph?.delivery_staging ?? [];
-        if (existing.length > 0) {
-          console.log(
-            `ℹ️ Data untuk proc_inst_id ${proc_inst_id} sudah ada (${existing.length} row), skip insert.`
-          );
-        } else {
-          const insertQuery = {
-            graph: {
-              method: "mutate",
-              endpoint: process.env.GRAPHQL_API,
-              gqlQuery: `
-                                mutation InsertDeliveryStaging(
-                                    $request_detail_id: Int,
-                                    $proc_inst_id: String,
-                                    $type: String,
-                                    $location_id: Int,
-                                    $created_at: timestamp,
-                                    $status: String,
-                                    $table_reference: String
-                                ) {
-                                    insert_delivery_staging(objects: {
-                                        request_id: $request_detail_id,
-                                        proc_inst_id: $proc_inst_id,
-                                        type: $type,
-                                        location_id: $location_id,
-                                        created_at: $created_at,
-                                        status: $status
-                                        table_reference: $table_reference
-                                    }) {
-                                        affected_rows
-                                        returning {
-                                            id
-                                            request_id
-                                            proc_inst_id
-                                            type
-                                            location_id
-                                            transfered_at
-                                            created_at
-                                            status
-                                            table_reference
-                                        }
-                                    }
-                                }
-                            `,
-              variables: {
-                request_detail_id,
-                proc_inst_id,
-                type,
-                location_id,
-                created_at,
-                status,
-                table_reference
-              },
-            },
-            query: [],
-          };
-
-          console.log(
-            "📦 Data siap dikirim ke delivery_staging:",
-            insertQuery
-          );
-          const insertResult = await configureQuery(fastify, insertQuery);
-          console.log("✅ Insert berhasil:", insertResult);
-        }
-
-        // 3️⃣ Selesaikan task Camunda
-        await taskService.complete(task);
-        console.log(`✅ Task ${task.id} berhasil diselesaikan.`);
-      } catch (error) {
-        if (error.response) {
-          console.error(
-            "❌ Gagal memproses task:",
-            error.response.status,
-            error.response.data
-          );
-        } else {
-          console.error("❌ Gagal memproses task:", error.message);
+          await taskService.handleFailure(task, {
+            errorMessage: err.message,
+            errorDetails: err.stack,
+            retries: 0,
+            retryTimeout: 1000,
+          });
         }
       }
-    }
     );
 
-    client.subscribe("getToleransiPartStaging", async function ({ task, taskService }) {
-      console.log("🚀 Task Dijalankan:", task.id);
-      try {
-        const source_stock = task.variables.get("source_stock");
-        const inventree = axios.create({
-          baseURL: `${process.env.SERVER_INVENTREE}/api`,
-          headers: {
-            Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-            "Content-Type": "application/json",
-          },
-          timeout: 10000,
-        });
-        const stockResponse = await inventree.get(`/stock/${source_stock}/`);
-        const stockData = stockResponse.data;
-        const locationId = stockData.location;
-        if (!locationId) {
-          throw new Error("Stock tidak memiliki lokasi (locationId kosong)");
-        }
-        const locationResponse = await inventree.get(
-          `/stock/location/${locationId}/`
-        );
-        const locationData = locationResponse.data;
-        const description =
-          locationData.description || "Deskripsi tidak tersedia";
-        console.log("📦 Location Description:", description);
-        await taskService.complete(task, {
-          description: description,
-        });
-        console.log(
-          `✅ Task ${task.id} berhasil diselesaikan dengan description = ${description}`
-        );
-      } catch (error) {
-        if (error.response) {
-          console.error(
-            "❌ Gagal memproses task:",
-            error.response.status,
-            error.response.data
-          );
-        } else {
-          console.error("❌ Gagal memproses task:", error.message);
-        }
-      }
-    }
-    );
+    //     client.subscribe("transferStockStagingArea", async function ({ task, taskService }) {
+    //         console.log("🚀 Task Dijalankan:", task.id);
+    //         try {
+    //           const proc_inst_id = task.processInstanceId;
+    //           const source_stock = task.variables.get("source_stock");
+    //           const part_id = task.variables.get("part_id");
+    //           const WIPLocation = task.variables.get("WIPLocation");
+    //           const quantity_input = task.variables.get("quantity_input");
+    //           const quantity_staging = task.variables.get("quantity_staging");
+    //           const now = new Date();
+    //           const created_at = new Date(now.getTime() + 7 * 60 * 60 * 1000)
+    //             .toISOString()
+    //             .replace("T", " ")
+    //             .replace("Z", "");
+    //           const selisih = quantity_input - quantity_staging;
+    //           const inventree = axios.create({
+    //             baseURL: `${process.env.SERVER_INVENTREE}/api`,
+    //             headers: {
+    //               Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+    //               "Content-Type": "application/json",
+    //             },
+    //             timeout: 10000,
+    //           });
+    //           const checkHistory = async (itemPk, notes) => {
+    //             try {
+    //               const res = await inventree.get("/stock/track/", {
+    //                 params: { item: itemPk, search: notes },
+    //               });
+    //               return res?.data?.count > 0;
+    //             } catch (err) {
+    //               console.error("⚠️ Error checkHistory:", err.message);
+    //               return false;
+    //             }
+    //           };
+    //           if (selisih !== 0) {
+    //             const notesAdj = `Adjustment Packaging Supplier | Proc Inst ID : ${proc_inst_id}`;
+    //             const alreadyAdjusted = await checkHistory(source_stock, notesAdj);
+    //             if (!alreadyAdjusted) {
+    //               console.log("📦 Melakukan adjustment stock:", notesAdj);
+    //               await inventree.post(
+    //                 `/stock/${selisih > 0 ? "add" : "remove"}/`,
+    //                 {
+    //                   items: [{ pk: source_stock, quantity: Math.abs(selisih) }],
+    //                   notes: notesAdj,
+    //                 }
+    //               );
+    //             } else {
+    //               console.log("⏩ Adjustment sudah pernah dilakukan, skip.");
+    //             }
+    //           }
+    //           const notesTransfer = `Mutasi Ke Lokasi WIP | Proc Inst ID: ${proc_inst_id}`;
+    //           const alreadyTransferred = await checkHistory(
+    //             source_stock,
+    //             notesTransfer
+    //           );
+    //           if (!alreadyTransferred) {
+    //             console.log("🚚 Melakukan transfer ke WIP:", notesTransfer);
+    //             const transferPayload = {
+    //               items: [
+    //                 {
+    //                   pk: Number(source_stock),
+    //                   quantity: quantity_input,
+    //                 },
+    //               ],
+    //               notes: notesTransfer,
+    //               location: WIPLocation,
+    //             };
+    //             await inventree.post("/stock/transfer/", transferPayload);
 
-    client.subscribe("transferStockStagingArea", async function ({ task, taskService }) {
-      console.log("?? Task Dijalankan:", task.id);
+    //             const { data: getData } = await inventree.get(
+    //               `/stock/?location=${WIPLocation}&part=${part_id}&ordering=-updated&limit=1`
+    //             );
 
-      try {
-        const proc_inst_id = task.processInstanceId;
-        const source_stock = task.variables.get("source_stock");
-        const part_id = task.variables.get("part_id");
-        const WIPLocation = task.variables.get("WIPLocation");
-        const quantity_input = task.variables.get("quantity_input");
-        const quantity_staging = task.variables.get("quantity_staging");
+    //             let newStockItemId = null;
+    //             if (getData?.results?.length > 0) {
+    //               newStockItemId = getData.results[0].pk;
+    //             }
 
-        const now = new Date();
-        const created_at = new Date(now.getTime() + 7 * 60 * 60 * 1000)
-          .toISOString()
-          .replace("T", " ")
-          .replace("Z", "");
+    //             console.log("new stock_item_id", newStockItemId);
 
-        const selisih = quantity_input - quantity_staging;
-        console.log("?? Selisih:", selisih);
+    //             const response = await configureQuery(fastify, {
+    //               graph: {
+    //                 method: "mutate",
+    //                 endpoint: process.env.GRAPHQL_API,
+    //                 gqlQuery: `mutation MyMutation($proc_inst_id: String!, $status: String!, $source_id: Int!, $date: timestamp!) {
+    //   update_delivery_staging(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {status: $status, source_id_wip: $source_id, transfered_at: $date}) {
+    //     affected_rows
+    //   }
+    // }`,
+    //                 variables: {
+    //                   proc_inst_id,
+    //                   status: "completed",
+    //                   source_id: newStockItemId,
+    //                   date: created_at,
+    //                 },
+    //               },
+    //               query: [],
+    //             });
 
-        const inventree = axios.create({
-          baseURL: `${process.env.SERVER_INVENTREE}/api`,
-          headers: {
-            Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-            "Content-Type": "application/json",
-          },
-          timeout: 10000,
-        });
+    //             console.log(
+    //               "📊 response Hasura:",
+    //               JSON.stringify(response.data, null, 2)
+    //             );
+    //           } else {
+    //             console.log("⏩ Transfer ke WIP sudah pernah dilakukan, skip.");
+    //           }
+    //           await taskService.complete(task);
+    //           console.log("✅ Task selesai:", task.id);
+    //         } catch (error) {
+    //           if (error.response) {
+    //             console.error(
+    //               "❌ Gagal memproses task:",
+    //               error.response.status,
+    //               error.response.data
+    //             );
+    //           } else {
+    //             console.error("❌ Gagal memproses task:", error.message);
+    //           }
+    //         }
+    //       }
+    //     );
 
-        const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    //     client.subscribe("Check_Stock", async function ({ task, taskService }) {
+    //               try {
+    //                   console.log(`🕒 Task "${task.topicName}" diterima (${task.id}) — menunggu 10 detik sebelum eksekusi...`);
+    //   await new Promise((resolve) => setTimeout(resolve, 10000));
+    //   console.log("⏳ 10 detik selesai, lanjut eksekusi task...");
 
-        const checkHistory = async (itemPk, notes) => {
-          try {
-            const res = await inventree.get("/stock/track/", {
-              params: { item: itemPk, search: notes },
-            });
-            return res?.data?.count > 0;
-          } catch (err) {
-            console.error("?? Error checkHistory:", err.message);
-            return false;
-          }
-        };
+    //                 const inventree = axios.create({
+    //                   baseURL: `${process.env.SERVER_INVENTREE}/api`,
+    //                   headers: {
+    //                     Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+    //                   },
+    //                   timeout: 10000,
+    //                 });
 
-        if (selisih !== 0) {
-          const notesAdj = `Adjustment Packaging Supplier | Proc Inst ID : ${proc_inst_id}`;
-          const alreadyAdjusted = await checkHistory(source_stock, notesAdj);
+    //                 const proc_inst_id = task.processInstanceId;
 
-          if (!alreadyAdjusted) {
-            console.log("?? Melakukan adjustment stock:", notesAdj);
+    //                 const checkQuery = {
+    //                   graph: {
+    //                     method: "query",
+    //                     endpoint: process.env.GRAPHQL_API,
+    //                     gqlQuery: `
+    //                       query MyQuery($proc_inst_id: String!) {
+    //                         mutasi_request(where: {proc_inst_id: {_eq: $proc_inst_id}}) {
+    //                           part_id
+    //                           mutasi_request_to_mutasi_details {
+    //                             quantity_data
+    //                             quantity_physical
+    //                             type
+    //                             location_id
+    //                           }
+    //                           mutasi_request_to_delivery_staging {
+    //                             source_id_wip
+    //                             type
+    //                             location_id
+    //                             status
+    //                           }
+    //                         }
+    //                       }
+    //                     `,
+    //                     variables: { proc_inst_id },
+    //                   },
+    //                 };
 
-            await inventree.post(`/stock/${selisih > 0 ? "add" : "remove"}/`, {
-              items: [{ pk: source_stock, quantity: Math.abs(selisih) }],
-              notes: notesAdj,
-            });
-          } else {
-            console.log("? Adjustment sudah pernah dilakukan, skip.");
-          }
-        }
+    //                 const checkResult = await configureQuery(fastify, checkQuery);
 
-        const notesTransfer = `Mutasi Ke Lokasi WIP | Proc Inst ID: ${proc_inst_id}`;
-        const alreadyTransferred = await checkHistory(source_stock, notesTransfer);
+    //                 const mutasiReq = checkResult?.data?.[0]?.graph?.mutasi_request ?? [];
+    //                 if (mutasiReq.length === 0)
+    //                   throw new Error("Mutasi request tidak ditemukan.");
 
-        if (!alreadyTransferred) {
-          console.log("? Delay 5 detik sebelum transfer...");
-          await delay(5000);
+    //                 const details = mutasiReq[0].mutasi_request_to_mutasi_details ?? [];
+    //                 const part_id = mutasiReq[0].part_id;
 
-          console.log("?? Melakukan transfer ke WIP:", notesTransfer);
+    //                 const product_name = (await inventree.get(`/part/${part_id}/`))?.data
+    //                   ?.full_name;
 
-          const transferPayload = {
-            items: [
-              {
-                pk: Number(source_stock),
-                quantity: quantity_input,
-              },
-            ],
-            notes: notesTransfer,
-            location: WIPLocation,
-          };
+    //                 let SO_Mutasi = true;
+    //                 const location_idt = [];
+    //                 const location_idg = [];
 
-          await inventree.post("/stock/transfer/", transferPayload);
+    //                 for (const d of details) {
+    //       // 🚫 Skip lokasi yang mengandung 'WIP' (harus paling atas sebelum cek selisih)
+    //       if (d.location_id && d.location_id.toLowerCase().includes("wip")) {
+    //         console.log(`⏭️ Melewati lokasi WIP: ${d.location_id}`);
+    //         continue; // lanjut ke item berikutnya, tidak eksekusi di bawah
+    //       }
 
-          const { data: getData } = await inventree.get(
-            `/stock/?location=${WIPLocation}&part=${part_id}&ordering=-updated&limit=1`
-          );
+    //       // 🔍 Cek selisih hanya untuk lokasi non-WIP
+    //       if (d.quantity_data !== d.quantity_physical) {
+    //         SO_Mutasi = false;
+    //         console.log(`⚠️ Selisih ditemukan di lokasi ${d.location_id}`);
 
-          let newStockItemId = null;
-          if (getData?.results?.length > 0) {
-            newStockItemId = getData.results[0].pk;
-          }
+    //         // Ambil data lokasi berdasarkan nama
+    //         const res = await inventree.get(`/stock/location/?name=${d.location_id}`);
 
-          console.log("new stock_item_id", newStockItemId);
+    //         if (res.data && res.data.results && res.data.results.length > 0) {
+    //           const firstLocation = res.data.results[0];
+    //           const location_description = firstLocation.description?.toLowerCase() || "";
 
-          await configureQuery(fastify, {
+    //           // Klasifikasi lokasi berdasarkan deskripsi
+    //           if (location_description.includes("toko")) {
+    //             location_idt.push(firstLocation.pk);
+    //           } else if (location_description.includes("gudang")) {
+    //             location_idg.push(firstLocation.pk);
+    //           } else {
+    //             console.log(`⚠️ Lokasi ${d.location_id} tidak dikenali (bukan toko/gudang)`);
+    //           }
+    //         }
+    //       }
+    //     }
+
+    //     // ✅ Jika tidak ada lokasi toko/gudang, override SO_Mutasi ke true
+    //     if (location_idt.length === 0 && location_idg.length === 0) {
+    //       console.log("✅ Tidak ada lokasi toko/gudang terdeteksi — set SO_Mutasi = true");
+    //       SO_Mutasi = true;
+    //     }
+
+    //     // Buat variabel untuk Camunda
+    //                 const date = new Date().toLocaleString("sv-SE").replace("T", " ");
+    //                 const variables = new Variables();
+    //                 variables.set("SO_Mutasi", SO_Mutasi);
+    //                 variables.set("so_toko", location_idt.length > 0); // true jika ada lokasi toko
+    //                 variables.set("so_gudang", location_idg.length > 0); // true jika ada lokasi gudang
+    //                 variables.set("part_id", part_id);
+    //                 variables.set("product_name", product_name);
+    //                 variables.set("type", "Mutasi");
+    //                 variables.set("date", date);
+
+    //                 variables.setTyped("location_idt", {
+    //                   value: JSON.stringify(location_idt),
+    //                   type: "Object",
+    //                   valueInfo: {
+    //                     serializationDataFormat: "application/json",
+    //                     objectTypeName: "java.util.ArrayList",
+    //                   },
+    //                 });
+
+    //                 variables.setTyped("location_idg", {
+    //                   value: JSON.stringify(location_idg),
+    //                   type: "Object",
+    //                   valueInfo: {
+    //                     serializationDataFormat: "application/json",
+    //                     objectTypeName: "java.util.ArrayList",
+    //                   },
+    //                 });
+
+    //                 console.log("📦 Camunda Variables:");
+    // console.log({
+    //   SO_Mutasi,
+    //   so_toko: location_idt.length > 0,
+    //   so_gudang: location_idg.length > 0,
+    //   part_id,
+    //   product_name,
+    //   type: "Mutasi",
+    //   date,
+    //   location_idt,
+    //   location_idg,
+    // });
+
+    //                 // ✅ Jalankan jika sudah siap kirim hasil ke Camunda
+    //                 await taskService.complete(task, variables);
+
+    //               } catch (error) {
+    //                 if (error.response) {
+    //                   console.error("❌ Gagal memproses task:", error.response.status, error.response.data);
+    //                 } else {
+    //                   console.error("❌ Gagal memproses task:", error.message);
+    //                 }
+    //               }
+    //     });
+
+    client.subscribe(
+      "getInstanceClosing",
+      async function ({ task, taskService }) {
+        console.log("🚀 Task Dijalankan:", task.id);
+        try {
+          const proc_inst_id = task.processInstanceId;
+          const invoice = task.variables.get("invoice");
+          const response = await configureQuery(fastify, {
             graph: {
               method: "mutate",
               endpoint: process.env.GRAPHQL_API,
               gqlQuery: `
-                        mutation MyMutation($proc_inst_id: String!, $status: String!, $source_id: Int!, $date: timestamp!) {
-                            update_delivery_staging(
-                                where: {proc_inst_id: {_eq: $proc_inst_id}},
-                                _set: {status: $status, source_id_wip: $source_id, transfered_at: $date}
+                        mutation insert($proc_inst_id: String!, $invoice: String!) {
+                            insert_mo_order_closing(
+                                objects: {
+                                    proc_inst_id: $proc_inst_id,
+                                    invoice: $invoice
+                                }
                             ) {
                                 affected_rows
                             }
@@ -3886,32 +4339,351 @@ import("camunda-external-task-client-js").then(
                     `,
               variables: {
                 proc_inst_id,
-                status: "completed",
-                source_id: newStockItemId,
-                date: created_at,
+                invoice,
               },
             },
             query: [],
           });
-        } else {
-          console.log("? Transfer ke WIP sudah pernah dilakukan, skip.");
-        }
-
-        await taskService.complete(task);
-        console.log("? Task selesai:", task.id);
-
-      } catch (error) {
-        if (error.response) {
-          console.error("? Gagal memproses task:", error.response.status, error.response.data);
-        } else {
-          console.error("? Gagal memproses task:", error.message);
+          console.log(
+            `🔄 proc_inst_id "${proc_inst_id}" disimpan ke invoice "${invoice}"`
+          );
+          console.log(
+            "📊 response Hasura:",
+            JSON.stringify(response.data, null, 2)
+          );
+          await taskService.complete(task);
+          console.log("✅ Task Selesai:", task.id);
+        } catch (error) {
+          console.error(
+            "❌ Terjadi kesalahan saat memproses task:",
+            error.message
+          );
+          await taskService.handleFailure(task, {
+            errorMessage: error.message,
+            errorDetails: error.stack,
+            retries: 0,
+            retryTimeout: 1000,
+          });
         }
       }
-    });
+    );
+
+    client.subscribe(
+      "getInstanceGenericStaging",
+      async function ({ task, taskService }) {
+        console.log("🚀 Task Dijalankan:", task.id);
+
+        try {
+          const proc_inst_id = task.processInstanceId;
+          const request_detail_id = task.variables.get("id");
+          const type = task.variables.get("destination_type");
+          const location_id = task.variables.get("WIPLocation");
+          const table_reference = task.variables.get("table_reference");
+          const status = "unprocessed";
+          const now = new Date();
+          const created_at = new Date(now.getTime() + 7 * 60 * 60 * 1000)
+            .toISOString()
+            .replace("T", " ")
+            .replace("Z", "");
+          const checkQuery = {
+            graph: {
+              method: "query",
+              endpoint: process.env.GRAPHQL_API,
+              gqlQuery: `
+                    query CheckDeliveryStaging($proc_inst_id: String!) {
+                        delivery_staging(where: {proc_inst_id: {_eq: $proc_inst_id}}) {
+                            id
+                            proc_inst_id
+                        }
+                    }
+                `,
+              variables: { proc_inst_id },
+            },
+          };
+          const checkResult = await configureQuery(fastify, checkQuery);
+          console.log(
+            "🔎 Hasil checkQuery:",
+            JSON.stringify(checkResult, null, 2)
+          );
+          const existing =
+            checkResult?.data?.[0]?.graph?.delivery_staging ?? [];
+          if (existing.length > 0) {
+            console.log(
+              `ℹ️ Data untuk proc_inst_id ${proc_inst_id} sudah ada (${existing.length} row), skip insert.`
+            );
+          } else {
+            const insertQuery = {
+              graph: {
+                method: "mutate",
+                endpoint: process.env.GRAPHQL_API,
+                gqlQuery: `
+                        mutation InsertDeliveryStaging(
+                            $request_detail_id: Int,
+                            $proc_inst_id: String,
+                            $type: String,
+                            $location_id: Int,
+                            $created_at: timestamp,
+                            $status: String,
+                            $table_reference: String
+                        ) {
+                            insert_delivery_staging(objects: {
+                                request_id: $request_detail_id,
+                                proc_inst_id: $proc_inst_id,
+                                type: $type,
+                                location_id: $location_id,
+                                created_at: $created_at,
+                                status: $status
+                                table_reference: $table_reference
+                            }) {
+                                affected_rows
+                                returning {
+                                    id
+                                    request_id
+                                    proc_inst_id
+                                    type
+                                    location_id
+                                    transfered_at
+                                    created_at
+                                    status
+                                    table_reference
+                                }
+                            }
+                        }
+                    `,
+                variables: {
+                  request_detail_id,
+                  proc_inst_id,
+                  type,
+                  location_id,
+                  created_at,
+                  status,
+                  table_reference,
+                },
+              },
+              query: [],
+            };
+
+            console.log(
+              "📦 Data siap dikirim ke delivery_staging:",
+              insertQuery
+            );
+            const insertResult = await configureQuery(fastify, insertQuery);
+            console.log("✅ Insert berhasil:", insertResult);
+          }
+
+          // 3️⃣ Selesaikan task Camunda
+          await taskService.complete(task);
+          console.log(`✅ Task ${task.id} berhasil diselesaikan.`);
+        } catch (error) {
+          if (error.response) {
+            console.error(
+              "❌ Gagal memproses task:",
+              error.response.status,
+              error.response.data
+            );
+          } else {
+            console.error("❌ Gagal memproses task:", error.message);
+          }
+        }
+      }
+    );
+
+    client.subscribe(
+      "getToleransiPartStaging",
+      async function ({ task, taskService }) {
+        console.log("🚀 Task Dijalankan:", task.id);
+        try {
+          const source_stock = task.variables.get("source_stock");
+          const inventree = axios.create({
+            baseURL: `${process.env.SERVER_INVENTREE}/api`,
+            headers: {
+              Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+              "Content-Type": "application/json",
+            },
+            timeout: 10000,
+          });
+          const stockResponse = await inventree.get(`/stock/${source_stock}/`);
+          const stockData = stockResponse.data;
+          const locationId = stockData.location;
+          if (!locationId) {
+            throw new Error("Stock tidak memiliki lokasi (locationId kosong)");
+          }
+          const locationResponse = await inventree.get(
+            `/stock/location/${locationId}/`
+          );
+          const locationData = locationResponse.data;
+          const description =
+            locationData.description || "Deskripsi tidak tersedia";
+          console.log("📦 Location Description:", description);
+          await taskService.complete(task, {
+            description: description,
+          });
+          console.log(
+            `✅ Task ${task.id} berhasil diselesaikan dengan description = ${description}`
+          );
+        } catch (error) {
+          if (error.response) {
+            console.error(
+              "❌ Gagal memproses task:",
+              error.response.status,
+              error.response.data
+            );
+          } else {
+            console.error("❌ Gagal memproses task:", error.message);
+          }
+        }
+      }
+    );
+
+    client.subscribe(
+      "transferStockStagingArea",
+      async function ({ task, taskService }) {
+        console.log("?? Task Dijalankan:", task.id);
+
+        try {
+          const proc_inst_id = task.processInstanceId;
+          const source_stock = task.variables.get("source_stock");
+          const part_id = task.variables.get("part_id");
+          const WIPLocation = task.variables.get("WIPLocation");
+          const quantity_input = task.variables.get("quantity_input");
+          const quantity_staging = task.variables.get("quantity_staging");
+
+          const now = new Date();
+          const created_at = new Date(now.getTime() + 7 * 60 * 60 * 1000)
+            .toISOString()
+            .replace("T", " ")
+            .replace("Z", "");
+
+          const selisih = quantity_input - quantity_staging;
+          console.log("?? Selisih:", selisih);
+
+          const inventree = axios.create({
+            baseURL: `${process.env.SERVER_INVENTREE}/api`,
+            headers: {
+              Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+              "Content-Type": "application/json",
+            },
+            timeout: 10000,
+          });
+
+          const delay = (ms) =>
+            new Promise((resolve) => setTimeout(resolve, ms));
+
+          const checkHistory = async (itemPk, notes) => {
+            try {
+              const res = await inventree.get("/stock/track/", {
+                params: { item: itemPk, search: notes },
+              });
+              return res?.data?.count > 0;
+            } catch (err) {
+              console.error("?? Error checkHistory:", err.message);
+              return false;
+            }
+          };
+
+          if (selisih !== 0) {
+            const notesAdj = `Adjustment Packaging Supplier | Proc Inst ID : ${proc_inst_id}`;
+            const alreadyAdjusted = await checkHistory(source_stock, notesAdj);
+
+            if (!alreadyAdjusted) {
+              console.log("?? Melakukan adjustment stock:", notesAdj);
+
+              await inventree.post(
+                `/stock/${selisih > 0 ? "add" : "remove"}/`,
+                {
+                  items: [{ pk: source_stock, quantity: Math.abs(selisih) }],
+                  notes: notesAdj,
+                }
+              );
+            } else {
+              console.log("? Adjustment sudah pernah dilakukan, skip.");
+            }
+          }
+
+          const notesTransfer = `Mutasi Ke Lokasi WIP | Proc Inst ID: ${proc_inst_id}`;
+          const alreadyTransferred = await checkHistory(
+            source_stock,
+            notesTransfer
+          );
+
+          if (!alreadyTransferred) {
+            console.log("? Delay 5 detik sebelum transfer...");
+            await delay(5000);
+
+            console.log("?? Melakukan transfer ke WIP:", notesTransfer);
+
+            const transferPayload = {
+              items: [
+                {
+                  pk: Number(source_stock),
+                  quantity: quantity_input,
+                },
+              ],
+              notes: notesTransfer,
+              location: WIPLocation,
+            };
+
+            await inventree.post("/stock/transfer/", transferPayload);
+
+            const { data: getData } = await inventree.get(
+              `/stock/?location=${WIPLocation}&part=${part_id}&ordering=-updated&limit=1`
+            );
+
+            let newStockItemId = null;
+            if (getData?.results?.length > 0) {
+              newStockItemId = getData.results[0].pk;
+            }
+
+            console.log("new stock_item_id", newStockItemId);
+
+            await configureQuery(fastify, {
+              graph: {
+                method: "mutate",
+                endpoint: process.env.GRAPHQL_API,
+                gqlQuery: `
+                            mutation MyMutation($proc_inst_id: String!, $status: String!, $source_id: Int!, $date: timestamp!) {
+                                update_delivery_staging(
+                                    where: {proc_inst_id: {_eq: $proc_inst_id}},
+                                    _set: {status: $status, source_id_wip: $source_id, transfered_at: $date}
+                                ) {
+                                    affected_rows
+                                }
+                            }
+                        `,
+                variables: {
+                  proc_inst_id,
+                  status: "completed",
+                  source_id: newStockItemId,
+                  date: created_at,
+                },
+              },
+              query: [],
+            });
+          } else {
+            console.log("? Transfer ke WIP sudah pernah dilakukan, skip.");
+          }
+
+          await taskService.complete(task);
+          console.log("? Task selesai:", task.id);
+        } catch (error) {
+          if (error.response) {
+            console.error(
+              "? Gagal memproses task:",
+              error.response.status,
+              error.response.data
+            );
+          } else {
+            console.error("? Gagal memproses task:", error.message);
+          }
+        }
+      }
+    );
 
     client.subscribe("Check_Stock", async function ({ task, taskService }) {
       try {
-        console.log(`🕒 Task "${task.topicName}" diterima (${task.id}) — menunggu 10 detik sebelum eksekusi...`);
+        console.log(
+          `🕒 Task "${task.topicName}" diterima (${task.id}) — menunggu 10 detik sebelum eksekusi...`
+        );
         await new Promise((resolve) => setTimeout(resolve, 10000)); // ⏳ delay 10 detik
 
         const inventree = axios.create({
@@ -3929,24 +4701,24 @@ import("camunda-external-task-client-js").then(
             method: "query",
             endpoint: process.env.GRAPHQL_API,
             gqlQuery: `
-                              query MyQuery($proc_inst_id: String!) {
-                                mutasi_request(where: {proc_inst_id: {_eq: $proc_inst_id}}) {
-                                  part_id
-                                  mutasi_request_to_mutasi_details {
-                                    quantity_data
-                                    quantity_physical
-                                    type
-                                    location_id
-                                  }
-                                  mutasi_request_to_delivery_staging {
-                                    source_id_wip
-                                    type
-                                    location_id
-                                    status
-                                  }
-                                }
-                              }
-                            `,
+                      query MyQuery($proc_inst_id: String!) {
+                        mutasi_request(where: {proc_inst_id: {_eq: $proc_inst_id}}) {
+                          part_id
+                          mutasi_request_to_mutasi_details {
+                            quantity_data
+                            quantity_physical
+                            type
+                            location_id
+                          }
+                          mutasi_request_to_delivery_staging {
+                            source_id_wip
+                            type
+                            location_id
+                            status
+                          }
+                        }
+                      }
+                    `,
             variables: { proc_inst_id },
           },
         };
@@ -3960,7 +4732,8 @@ import("camunda-external-task-client-js").then(
         const details = mutasiReq[0].mutasi_request_to_mutasi_details ?? [];
         const part_id = mutasiReq[0].part_id;
 
-        const product_name = (await inventree.get(`/part/${part_id}/`))?.data?.full_name;
+        const product_name = (await inventree.get(`/part/${part_id}/`))?.data
+          ?.full_name;
 
         let SO_Mutasi = true;
         const location_idt = [];
@@ -3978,25 +4751,32 @@ import("camunda-external-task-client-js").then(
             SO_Mutasi = false;
             console.log(`⚠️ Selisih ditemukan di lokasi ${d.location_id}`);
 
-            const res = await inventree.get(`/stock/location/?name=${d.location_id}`);
+            const res = await inventree.get(
+              `/stock/location/?name=${d.location_id}`
+            );
 
             if (res.data && res.data.results && res.data.results.length > 0) {
               const firstLocation = res.data.results[0];
-              const location_description = firstLocation.description?.toLowerCase() || "";
+              const location_description =
+                firstLocation.description?.toLowerCase() || "";
 
               if (location_description.includes("toko")) {
                 location_idt.push(firstLocation.pk);
               } else if (location_description.includes("gudang")) {
                 location_idg.push(firstLocation.pk);
               } else {
-                console.log(`⚠️ Lokasi ${d.location_id} tidak dikenali (bukan toko/gudang)`);
+                console.log(
+                  `⚠️ Lokasi ${d.location_id} tidak dikenali (bukan toko/gudang)`
+                );
               }
             }
           }
         }
 
         if (location_idt.length === 0 && location_idg.length === 0) {
-          console.log("✅ Tidak ada lokasi toko/gudang terdeteksi — set SO_Mutasi = true");
+          console.log(
+            "✅ Tidak ada lokasi toko/gudang terdeteksi — set SO_Mutasi = true"
+          );
           SO_Mutasi = true;
         }
 
@@ -4033,296 +4813,334 @@ import("camunda-external-task-client-js").then(
 
         // ✅ Jalankan jika sudah siap kirim hasil ke Camunda
         await taskService.complete(task, variables);
-
       } catch (error) {
         if (error.response) {
-          console.error("❌ Gagal memproses task:", error.response.status, error.response.data);
+          console.error(
+            "❌ Gagal memproses task:",
+            error.response.status,
+            error.response.data
+          );
         } else {
           console.error("❌ Gagal memproses task:", error.message);
         }
       }
     });
 
-    client.subscribe("Check_Stock_Mutasi_Prepare", async function ({ task, taskService }) {
-      try {
-        console.log(`🕒 Task "${task.topicName}" diterima (${task.id}) — menunggu 10 detik sebelum eksekusi...`);
-        await new Promise((resolve) => setTimeout(resolve, 10000)); // ⏳ delay 10 detik
+    client.subscribe(
+      "Check_Stock_Mutasi_Prepare",
+      async function ({ task, taskService }) {
+        try {
+          console.log(
+            `🕒 Task "${task.topicName}" diterima (${task.id}) — menunggu 10 detik sebelum eksekusi...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, 10000)); // ⏳ delay 10 detik
 
-        const inventree = axios.create({
-          baseURL: `${process.env.SERVER_INVENTREE}/api`,
-          headers: {
-            Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-          },
-          timeout: 10000,
-        });
+          const inventree = axios.create({
+            baseURL: `${process.env.SERVER_INVENTREE}/api`,
+            headers: {
+              Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+            },
+            timeout: 10000,
+          });
 
-        const proc_inst_id = task.processInstanceId;
+          const proc_inst_id = task.processInstanceId;
 
-        // 🔍 Query data dari Hasura GraphQL
-        const checkQuery = {
-          graph: {
-            method: "query",
-            endpoint: process.env.GRAPHQL_API,
-            gqlQuery: `
-                  query MyQuery($proc_inst_id: String!) {
-                    internal_consolidation_process(where: {proc_inst_id: {_eq: $proc_inst_id}}) {
-                      destination
-                      part_id
-                      quantity_data
-                      quantity_physical
-                    }
-                  }
-                `,
-            variables: { proc_inst_id },
-          },
-        };
+          // 🔍 Query data dari Hasura GraphQL
+          const checkQuery = {
+            graph: {
+              method: "query",
+              endpoint: process.env.GRAPHQL_API,
+              gqlQuery: `
+          query MyQuery($proc_inst_id: String!) {
+            internal_consolidation_process(where: {proc_inst_id: {_eq: $proc_inst_id}}) {
+              destination
+              part_id
+              quantity_data
+              quantity_physical
+            }
+          }
+        `,
+              variables: { proc_inst_id },
+            },
+          };
 
-        const checkResult = await configureQuery(fastify, checkQuery);
-        const mutasiReq = checkResult?.data?.[0]?.graph?.internal_consolidation_process ?? [];
+          const checkResult = await configureQuery(fastify, checkQuery);
+          const mutasiReq =
+            checkResult?.data?.[0]?.graph?.internal_consolidation_process ?? [];
 
-        if (mutasiReq.length === 0) throw new Error("❌ Mutasi request tidak ditemukan.");
+          if (mutasiReq.length === 0)
+            throw new Error("❌ Mutasi request tidak ditemukan.");
 
-        const {
-          part_id,
-          destination,
-          quantity_data,
-          quantity_physical
-        } = mutasiReq[0];
+          const { part_id, destination, quantity_data, quantity_physical } =
+            mutasiReq[0];
 
-        // Ambil nama produk dari Inventree
-        const productRes = await inventree.get(`/part/${part_id}/`);
-        const product_name = productRes?.data?.full_name || "Unknown Product";
+          // Ambil nama produk dari Inventree
+          const productRes = await inventree.get(`/part/${part_id}/`);
+          const product_name = productRes?.data?.full_name || "Unknown Product";
 
-        let SO_Mutasi = true;
-        const location_idt = [];
-        const location_idg = [];
+          let SO_Mutasi = true;
+          const location_idt = [];
+          const location_idg = [];
 
-        // 🚫 Skip lokasi WIP
-        if (destination && destination.toLowerCase().includes("wip")) {
-          console.log(`⏭️ Melewati lokasi WIP: ${destination}`);
-        } else {
-          // 🔍 Cek selisih
-          if (quantity_data !== quantity_physical) {
-            SO_Mutasi = false;
-            console.log(`⚠️ Selisih ditemukan di lokasi ${destination}`);
+          // 🚫 Skip lokasi WIP
+          if (destination && destination.toLowerCase().includes("wip")) {
+            console.log(`⏭️ Melewati lokasi WIP: ${destination}`);
+          } else {
+            // 🔍 Cek selisih
+            if (quantity_data !== quantity_physical) {
+              SO_Mutasi = false;
+              console.log(`⚠️ Selisih ditemukan di lokasi ${destination}`);
 
-            const res = await inventree.get(`/stock/location/?name=${destination}`);
-            const results = res?.data?.results || [];
+              const res = await inventree.get(
+                `/stock/location/?name=${destination}`
+              );
+              const results = res?.data?.results || [];
 
-            if (results.length > 0) {
-              const firstLocation = results[0];
-              const desc = (firstLocation.description || "").toLowerCase();
+              if (results.length > 0) {
+                const firstLocation = results[0];
+                const desc = (firstLocation.description || "").toLowerCase();
 
-              if (desc.includes("toko")) {
-                location_idt.push(firstLocation.pk);
-              } else if (desc.includes("gudang")) {
-                location_idg.push(firstLocation.pk);
+                if (desc.includes("toko")) {
+                  location_idt.push(firstLocation.pk);
+                } else if (desc.includes("gudang")) {
+                  location_idg.push(firstLocation.pk);
+                } else {
+                  console.log(
+                    `⚠️ Lokasi ${destination} tidak dikenali (bukan toko/gudang)`
+                  );
+                }
               } else {
-                console.log(`⚠️ Lokasi ${destination} tidak dikenali (bukan toko/gudang)`);
+                console.log(
+                  `⚠️ Lokasi ${destination} tidak ditemukan di Inventree.`
+                );
               }
-            } else {
-              console.log(`⚠️ Lokasi ${destination} tidak ditemukan di Inventree.`);
             }
           }
-        }
 
-        // ✅ Jika tidak ada lokasi toko/gudang, maka anggap aman
-        if (location_idt.length === 0 && location_idg.length === 0) {
-          console.log("✅ Tidak ada lokasi toko/gudang terdeteksi — set SO_Mutasi = true");
-          SO_Mutasi = true;
-        }
+          // ✅ Jika tidak ada lokasi toko/gudang, maka anggap aman
+          if (location_idt.length === 0 && location_idg.length === 0) {
+            console.log(
+              "✅ Tidak ada lokasi toko/gudang terdeteksi — set SO_Mutasi = true"
+            );
+            SO_Mutasi = true;
+          }
 
-        // 🧩 Buat variabel Camunda
-        const date = new Date().toLocaleString("sv-SE").replace("T", " ");
-        const variables = new Variables();
+          // 🧩 Buat variabel Camunda
+          const date = new Date().toLocaleString("sv-SE").replace("T", " ");
+          const variables = new Variables();
 
-        variables.set("SO_Mutasi", SO_Mutasi);
-        variables.set("so_toko", location_idt.length > 0);
-        variables.set("so_gudang", location_idg.length > 0);
-        variables.set("part_id", part_id);
-        variables.set("product_name", product_name);
-        variables.set("type", "Mutasi Prepare");
-        variables.set("date", date);
+          variables.set("SO_Mutasi", SO_Mutasi);
+          variables.set("so_toko", location_idt.length > 0);
+          variables.set("so_gudang", location_idg.length > 0);
+          variables.set("part_id", part_id);
+          variables.set("product_name", product_name);
+          variables.set("type", "Mutasi Prepare");
+          variables.set("date", date);
 
-        variables.setTyped("location_idt", {
-          value: JSON.stringify(location_idt),
-          type: "Object",
-          valueInfo: {
-            serializationDataFormat: "application/json",
-            objectTypeName: "java.util.ArrayList",
-          },
-        });
+          variables.setTyped("location_idt", {
+            value: JSON.stringify(location_idt),
+            type: "Object",
+            valueInfo: {
+              serializationDataFormat: "application/json",
+              objectTypeName: "java.util.ArrayList",
+            },
+          });
 
-        variables.setTyped("location_idg", {
-          value: JSON.stringify(location_idg),
-          type: "Object",
-          valueInfo: {
-            serializationDataFormat: "application/json",
-            objectTypeName: "java.util.ArrayList",
-          },
-        });
+          variables.setTyped("location_idg", {
+            value: JSON.stringify(location_idg),
+            type: "Object",
+            valueInfo: {
+              serializationDataFormat: "application/json",
+              objectTypeName: "java.util.ArrayList",
+            },
+          });
 
-        console.log("📦 Camunda Variables:");
-        console.log(JSON.stringify(variables.getAll(), null, 2));
+          console.log("📦 Camunda Variables:");
+          console.log(JSON.stringify(variables.getAll(), null, 2));
 
-        // ✅ Kirim hasil ke Camunda (aktifkan setelah tes)
-        await taskService.complete(task, variables);
-        console.log(`✅ Task "${task.topicName}" selesai.`);
-
-      } catch (error) {
-        if (error.response) {
-          console.error("❌ Gagal memproses task:", error.response.status, error.response.data);
-        } else {
-          console.error("❌ Gagal memproses task:", error.message);
+          // ✅ Kirim hasil ke Camunda (aktifkan setelah tes)
+          // await taskService.complete(task, variables);
+          console.log(`✅ Task "${task.topicName}" selesai.`);
+        } catch (error) {
+          if (error.response) {
+            console.error(
+              "❌ Gagal memproses task:",
+              error.response.status,
+              error.response.data
+            );
+          } else {
+            console.error("❌ Gagal memproses task:", error.message);
+          }
         }
       }
-    });
+    );
 
+    client.subscribe(
+      "Check_Stock_Prepare",
+      async function ({ task, taskService }) {
+        try {
+          const inventree = axios.create({
+            baseURL: `${process.env.SERVER_INVENTREE}/api`,
+            headers: {
+              Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+            },
+            timeout: 10000,
+          });
+          const proc_inst_id = task.processInstanceId;
+          const checkQuery = {
+            graph: {
+              method: "query",
+              endpoint: process.env.GRAPHQL_API,
+              gqlQuery: `
+                                query MyQuery($proc_inst_id: String!) {
+                                    mutasi_request(where: {proc_inst_id: {_eq: $proc_inst_id}}) {
+                                        part_id
+                                        mutasi_request_to_mutasi_details {
+                                            quantity_data
+                                            quantity_physical
+                                            type
+                                            location_id
+                                        }
+                                        mutasi_request_to_delivery_staging {
+                                            source_id_wip
+                                            type
+                                            location_id
+                                            status
+                                        }
+                                    }
+                                }
+                            `,
+              variables: { proc_inst_id },
+            },
+          };
 
-    client.subscribe("Check_Stock_Prepare", async function ({ task, taskService }) {
-      try {
+          const checkResult = await configureQuery(fastify, checkQuery);
+          console.log(
+            "🔎 Hasil checkQuery:",
+            JSON.stringify(checkResult, null, 2)
+          );
+
+          const mutasiReq = checkResult?.data?.[0]?.graph?.mutasi_request ?? [];
+          if (mutasiReq.length === 0)
+            throw new Error("Mutasi request tidak ditemukan.");
+
+          const details = mutasiReq[0].mutasi_request_to_mutasi_details ?? [];
+          const part_id = mutasiReq[0].part_id;
+
+          const product_name = (await inventree.get(`/part/${part_id}/`))?.data
+            ?.full_name;
+
+          let SO_Mutasi = true;
+          const invalid_locations = [];
+
+          for (const d of details) {
+            if (d.quantity_data !== d.quantity_physical) {
+              SO_Mutasi = false;
+              console.log(`⚠️ Selisih ditemukan di lokasi ${d.location_id}`);
+              const res = await inventree.get(
+                `/stock/location/?name=${d.location_id}`
+              );
+              if (res.data && res.data.length > 0) {
+                invalid_locations.push({
+                  location_id: d.location_id,
+                  location_name: res.data[0].name,
+                  location_pk: res.data[0].pk,
+                });
+              }
+            }
+          }
+          const variables = new Variables();
+          variables.set("SO_Mutasi", SO_Mutasi);
+          variables.set("part_id", part_id);
+          variables.set("product_name", product_name);
+          variables.set("type", "Mutasi");
+          variables.set("ownership", "gudang");
+          variables.set("date", new Date().toISOString());
+          variables.setTyped("invalid_locations", {
+            value: JSON.stringify(invalid_locations),
+            type: "Object",
+            valueInfo: {
+              serializationDataFormat: "application/json",
+              objectTypeName: "java.util.ArrayList",
+            },
+          });
+          console.log(
+            SO_Mutasi
+              ? "✅ Semua quantity sama"
+              : `❌ Ada selisih di ${invalid_locations.length} lokasi`
+          );
+          await taskService.complete(task, variables);
+        } catch (error) {
+          if (error.response) {
+            console.error(
+              "❌ Gagal memproses task:",
+              error.response.status,
+              error.response.data
+            );
+          } else {
+            console.error("❌ Gagal memproses task:", error.message);
+          }
+        }
+      }
+    );
+
+    client.subscribe(
+      "checkQuantityWIP",
+      async function ({ task, taskService }) {
+        console.log("🚀 Task Dijalankan:", task.id);
+
         const inventree = axios.create({
           baseURL: `${process.env.SERVER_INVENTREE}/api`,
           headers: {
             Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+            "Content-Type": "application/json",
           },
           timeout: 10000,
         });
-        const proc_inst_id = task.processInstanceId;
-        const checkQuery = {
-          graph: {
-            method: "query",
-            endpoint: process.env.GRAPHQL_API,
-            gqlQuery: `
-                                        query MyQuery($proc_inst_id: String!) {
-                                            mutasi_request(where: {proc_inst_id: {_eq: $proc_inst_id}}) {
-                                                part_id
-                                                mutasi_request_to_mutasi_details {
-                                                    quantity_data
-                                                    quantity_physical
-                                                    type
-                                                    location_id
-                                                }
-                                                mutasi_request_to_delivery_staging {
-                                                    source_id_wip
-                                                    type
-                                                    location_id
-                                                    status
-                                                }
-                                            }
-                                        }
-                                    `,
-            variables: { proc_inst_id },
-          },
-        };
 
-        const checkResult = await configureQuery(fastify, checkQuery);
-        console.log("🔎 Hasil checkQuery:", JSON.stringify(checkResult, null, 2));
+        try {
+          // 🧠 Ambil semua variabel task dengan fallback default
+          const proc_inst_id = task.processInstanceId;
+          const quantity = task.variables.get("quantity") ?? 0;
+          const part_id = task.variables.get("part_id") ?? null;
+          const destination =
+            task.variables.get("destination_consolidation") ?? null;
+          const created_by = task.variables.get("created_by") ?? "-";
+          const type = task.variables.get("type") ?? null;
+          const status = "unprocessed";
+          const created_at = new Date().toLocaleString("sv-SE", {
+            timeZone: "Asia/Jakarta",
+          });
+          const unique_trx = task.variables.get("unique_trx");
+          const urgensi = task.variables.get("urgensi");
+          const part_name = task.variables.get("product_name");
 
-        const mutasiReq = checkResult?.data?.[0]?.graph?.mutasi_request ?? [];
-        if (mutasiReq.length === 0) throw new Error("Mutasi request tidak ditemukan.");
+          const business_key = `${unique_trx}:${part_name}:${urgensi}`;
 
-        const details = mutasiReq[0].mutasi_request_to_mutasi_details ?? [];
-        const part_id = mutasiReq[0].part_id;
+          console.log("🔑 Business Key:", business_key);
 
-        const product_name = (
-          await inventree.get(`/part/${part_id}/`)
-        )?.data?.full_name;
+          // 🔎 Ambil data stok dari InvenTree
+          const { data } = await inventree.get(
+            `/stock/?location=6011&part=${part_id}`
+          );
+          const results = data?.results || [];
+          const totalQuantity = results.reduce(
+            (acc, item) => acc + (item.quantity || 0),
+            0
+          );
+          console.log(
+            `📦 Total stok ditemukan: ${totalQuantity} | Dibutuhkan: ${quantity}`
+          );
 
-        let SO_Mutasi = true;
-        const invalid_locations = [];
+          const WIP_enough = quantity <= totalQuantity;
+          console.log(`🔍 WIP_enough: ${WIP_enough}`);
 
-        for (const d of details) {
-          if (d.quantity_data !== d.quantity_physical) {
-            SO_Mutasi = false;
-            console.log(`⚠️ Selisih ditemukan di lokasi ${d.location_id}`);
-            const res = await inventree.get(`/stock/location/?name=${d.location_id}`);
-            if (res.data && res.data.length > 0) {
-              invalid_locations.push({
-                location_id: d.location_id,
-                location_name: res.data[0].name,
-                location_pk: res.data[0].pk,
-              });
-            }
-          }
-        }
-        const variables = new Variables();
-        variables.set("SO_Mutasi", SO_Mutasi);
-        variables.set("part_id", part_id);
-        variables.set("product_name", product_name);
-        variables.set("type", "Mutasi");
-        variables.set("ownership", "gudang");
-        variables.set("date", new Date().toISOString());
-        variables.setTyped("invalid_locations", {
-          value: JSON.stringify(invalid_locations),
-          type: "Object",
-          valueInfo: {
-            serializationDataFormat: "application/json",
-            objectTypeName: "java.util.ArrayList",
-          },
-        });
-        console.log(
-          SO_Mutasi
-            ? "✅ Semua quantity sama"
-            : `❌ Ada selisih di ${invalid_locations.length} lokasi`
-        );
-        await taskService.complete(task, variables);
-      } catch (error) {
-        if (error.response) {
-          console.error("❌ Gagal memproses task:", error.response.status, error.response.data);
-        } else {
-          console.error("❌ Gagal memproses task:", error.message);
-        }
-      }
-    });
-
-    client.subscribe("checkQuantityWIP", async function ({ task, taskService }) {
-      console.log("🚀 Task Dijalankan:", task.id);
-
-      const inventree = axios.create({
-        baseURL: `${process.env.SERVER_INVENTREE}/api`,
-        headers: {
-          Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        timeout: 10000,
-      });
-
-      try {
-        // 🧠 Ambil semua variabel task dengan fallback default
-        const proc_inst_id = task.processInstanceId;
-        const quantity = task.variables.get("quantity") ?? 0;
-        const part_id = task.variables.get("part_id") ?? null;
-        const destination = task.variables.get("destination_consolidation") ?? null;
-        const created_by = task.variables.get("created_by") ?? "-";
-        const type = task.variables.get("type") ?? null;
-        const status = "unprocessed";
-        const created_at = new Date().toLocaleString("sv-SE", {
-          timeZone: "Asia/Jakarta",
-        });
-        const unique_trx = task.variables.get("unique_trx");
-        const urgensi = task.variables.get("urgensi");
-        const part_name = task.variables.get("product_name");
-
-        const business_key = `${unique_trx}:${part_name}:${urgensi}`;
-
-        console.log("🔑 Business Key:", business_key);
-
-        // 🔎 Ambil data stok dari InvenTree
-        const { data } = await inventree.get(`/stock/?location=1000006&part=${part_id}`);
-        const results = data?.results || [];
-        const totalQuantity = results.reduce((acc, item) => acc + (item.quantity || 0), 0);
-        console.log(`📦 Total stok ditemukan: ${totalQuantity} | Dibutuhkan: ${quantity}`);
-
-        const WIP_enough = quantity <= totalQuantity;
-        console.log(`🔍 WIP_enough: ${WIP_enough}`);
-
-        // 🧩 Buat insertQuery dengan format yang kamu mau
-        const insertQuery = {
-          graph: {
-            method: "mutate",
-            endpoint: process.env.GRAPHQL_API,
-            gqlQuery: `
+          // 🧩 Buat insertQuery dengan format yang kamu mau
+          const insertQuery = {
+            graph: {
+              method: "mutate",
+              endpoint: process.env.GRAPHQL_API,
+              gqlQuery: `
                         mutation InsertInternalConsolidation(
                             $proc_inst_id: String!,
                             $part_id: Int!,
@@ -4358,110 +5176,125 @@ import("camunda-external-task-client-js").then(
                             }
                         }
                     `,
-            variables: {
-              proc_inst_id,
-              part_id,
-              quantity,
-              destination,
-              type,
-              created_by,
-              status,
-              created_at,
-              unique_trx,
-              urgensi
+              variables: {
+                proc_inst_id,
+                part_id,
+                quantity,
+                destination,
+                type,
+                created_by,
+                status,
+                created_at,
+                unique_trx,
+                urgensi,
+              },
             },
-          },
-          query: [],
-        };
+            query: [],
+          };
 
-        console.log("📦 Data siap dikirim ke internal_consolidation_process:", insertQuery);
+          console.log(
+            "📦 Data siap dikirim ke internal_consolidation_process:",
+            insertQuery
+          );
 
-        // 🚀 Jalankan mutation
-        const insertResult = await configureQuery(fastify, insertQuery);
-        console.log("✅ Insert berhasil:", insertResult);
+          // 🚀 Jalankan mutation
+          const insertResult = await configureQuery(fastify, insertQuery);
+          console.log("✅ Insert berhasil:", insertResult);
 
-        // ✅ Set variabel Camunda
-        const variables = new Variables();
-        variables.set("WIP_enough", WIP_enough);
-        variables.set("business_key", business_key);
-        if (WIP_enough) {
-          variables.set("WIPLocation", 1000006);
-          variables.set("picker", "InventoryPrepareCoordinator");
+          // ✅ Set variabel Camunda
+          const variables = new Variables();
+          variables.set("WIP_enough", WIP_enough);
+          variables.set("business_key", business_key);
+          if (WIP_enough) {
+            variables.set("WIPLocation", 1000006);
+            variables.set("picker", "PrepareWarehouseCoordinator");
+          }
+          await taskService.complete(task, variables);
+          console.log("✅ Task Selesai:", task.id);
+        } catch (error) {
+          console.error(
+            "❌ Terjadi kesalahan saat memproses task:",
+            error.message
+          );
+          await handleFailureDefault(task, {
+            errorMessage: error.message,
+            errorDetails: error.stack,
+            retries: 0,
+            retryTimeout: 1000,
+          });
         }
-        await taskService.complete(task, variables)
-        console.log("✅ Task Selesai:", task.id);
-      } catch (error) {
-        console.error("❌ Terjadi kesalahan saat memproses task:", error.message);
-        await handleFailureDefault(task, {
-          errorMessage: error.message,
-          errorDetails: error.stack,
-          retries: 0,
-          retryTimeout: 1000,
-        });
       }
-    });
+    );
 
+    client.subscribe(
+      "checkStatusCustomDatabase",
+      async ({ task, taskService }) => {
+        console.log("🚀 Task Dijalankan:", task.id);
+        try {
+          const part_id = task.variables.get("part_id") ?? null;
+          const res = await configureQuery(fastify, {
+            graph: {
+              method: "query",
+              endpoint: process.env.GRAPHQL_API,
+              gqlQuery: `
+                        query MyQuery($part_id: Int!) {
+                            mutasi_request(
+                                where: {part_id: {_eq: $part_id}, status: {_neq: "completed"}, is_prepare_needed: {_eq:true}}
+                            ) {
+                                id
+                            }
+                        }
+                    `,
+              variables: { part_id },
+            },
+            query: [],
+          });
 
-    client.subscribe("checkStatusCustomDatabase", async ({ task, taskService }) => {
-      console.log("🚀 Task Dijalankan:", task.id);
-      try {
-        const part_id = task.variables.get("part_id") ?? null;
-        const res = await configureQuery(fastify, {
-          graph: {
-            method: "query",
-            endpoint: process.env.GRAPHQL_API,
-            gqlQuery: `
-                                query MyQuery($part_id: Int!) {
-                                    mutasi_request(
-                                        where: {part_id: {_eq: $part_id}, status: {_neq: "completed"}, is_prepare_needed: {_eq:true}}
-                                    ) {
-                                        id
-                                    }
-                                }
-                            `,
-            variables: { part_id },
-          },
-          query: [],
-        });
-
-        const data = res?.data?.graph?.mutasi_request || [];
-        const count = data.length;
-        console.log(`📊 Ditemukan ${count} mutasi_request`);
-        const quantity_enough = count > 0;
-        const variables = new Variables();
-        variables.set("quantity_enough", quantity_enough);
-        await taskService.complete(task, variables);
-        console.log("✅ Task Selesai:", task.id);
-      } catch (error) {
-        console.error("❌ Error saat memproses task:", error.message);
-        await handleFailureDefault(task, {
-          errorMessage: error.message,
-          errorDetails: error.stack,
-          retries: 0,
-          retryTimeout: 1000,
-        });
+          const data = res?.data?.graph?.mutasi_request || [];
+          const count = data.length;
+          console.log(`📊 Ditemukan ${count} mutasi_request`);
+          const quantity_enough = count > 0;
+          const variables = new Variables();
+          variables.set("quantity_enough", quantity_enough);
+          await taskService.complete(task, variables);
+          console.log("✅ Task Selesai:", task.id);
+        } catch (error) {
+          console.error("❌ Error saat memproses task:", error.message);
+          await handleFailureDefault(task, {
+            errorMessage: error.message,
+            errorDetails: error.stack,
+            retries: 0,
+            retryTimeout: 1000,
+          });
+        }
       }
-    });
+    );
 
-    client.subscribe("getInstanceMutasiPrepare", async function ({ task, taskService }) {
-      console.log("🚀 Task Dijalankan:", task.id);
+    client.subscribe(
+      "getInstanceMutasiPrepare",
+      async function ({ task, taskService }) {
+        console.log("🚀 Task Dijalankan:", task.id);
 
-      try {
-        const proc_inst_id = task.processInstanceId;
-        const part_id = task.variables.get("part_id") ?? null;
-        const urgensi = task.variables.get("urgensi");
-        const quantity = 0;
-        const created_by = task.variables.get("created_by") ?? null;
-        const status = "Processed";
-        const now = new Date();
+        try {
+          const proc_inst_id = task.processInstanceId;
+          const part_id = task.variables.get("part_id") ?? null;
+          const urgensi = task.variables.get("urgensi");
+          const quantity = 0;
+          const created_by = task.variables.get("created_by") ?? null;
+          const status = "Processed";
+          const now = new Date();
 
-        const formattedDate = now.toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
-        const created_at = now.toLocaleString("sv-SE", { timeZone: "Asia/Jakarta" });
+          const formattedDate = now.toLocaleDateString("sv-SE", {
+            timeZone: "Asia/Jakarta",
+          });
+          const created_at = now.toLocaleString("sv-SE", {
+            timeZone: "Asia/Jakarta",
+          });
 
-        const uniquePrefix = `IMP|${formattedDate}|${part_id}|`;
+          const uniquePrefix = `IMP|${formattedDate}|${part_id}|`;
 
-        // 🔹 Cek apakah sudah ada trx dengan prefix ini
-        const checkQuery = `
+          // 🔹 Cek apakah sudah ada trx dengan prefix ini
+          const checkQuery = `
             query CheckExistingTrx($like_pattern: String!) {
                 mutasi_request(
                     where: { unique_trx: { _like: $like_pattern } }
@@ -4473,29 +5306,33 @@ import("camunda-external-task-client-js").then(
             }
         `;
 
-        const checkResponse = await configureQuery(fastify, {
-          graph: {
-            method: "query",
-            endpoint: process.env.GRAPHQL_API,
-            gqlQuery: checkQuery,
-            variables: { like_pattern: `${uniquePrefix}%` },
-          },
-          query: [],
-        });
+          const checkResponse = await configureQuery(fastify, {
+            graph: {
+              method: "query",
+              endpoint: process.env.GRAPHQL_API,
+              gqlQuery: checkQuery,
+              variables: { like_pattern: `${uniquePrefix}%` },
+            },
+            query: [],
+          });
 
-        let unique_trx = uniquePrefix;
+          let unique_trx = uniquePrefix;
 
-        console.log("🔍 Hasil pengecekan trx terakhir:", JSON.stringify(checkResponse, null, 2));
-        if (checkResponse?.data?.[0].graph?.mutasi_request?.length > 0) {
-          const lastTrx = checkResponse.data[0].graph.mutasi_request[0].unique_trx;
-          const parts = lastTrx.split("|");
-          const lastNumber = parseInt(parts[3]) || 0;
-          const nextNumber = lastNumber + 1;
-          unique_trx = `${uniquePrefix}${nextNumber}`;
-        }
+          console.log(
+            "🔍 Hasil pengecekan trx terakhir:",
+            JSON.stringify(checkResponse, null, 2)
+          );
+          if (checkResponse?.data?.[0].graph?.mutasi_request?.length > 0) {
+            const lastTrx =
+              checkResponse.data[0].graph.mutasi_request[0].unique_trx;
+            const parts = lastTrx.split("|");
+            const lastNumber = parseInt(parts[3]) || 0;
+            const nextNumber = lastNumber + 1;
+            unique_trx = `${uniquePrefix}${nextNumber}`;
+          }
 
-        // 🔹 Mutation GraphQL
-        const gqlMutation = `
+          // 🔹 Mutation GraphQL
+          const gqlMutation = `
             mutation InsertMutasiRequest(
                 $proc_inst_id: String!,
                 $part_id: Int!,
@@ -4531,118 +5368,122 @@ import("camunda-external-task-client-js").then(
             }
         `;
 
-        // 🧠 Lihat semua variabel yang dikirim ke Hasura
-        const mutationVariables = {
-          proc_inst_id,
-          part_id,
-          quantity,
-          created_at,
-          created_by,
-          status,
-          unique_trx,
-          urgensi,
-          is_prepare_needed: true,
-        };
+          // 🧠 Lihat semua variabel yang dikirim ke Hasura
+          const mutationVariables = {
+            proc_inst_id,
+            part_id,
+            quantity,
+            created_at,
+            created_by,
+            status,
+            unique_trx,
+            urgensi,
+            is_prepare_needed: true,
+          };
 
-        console.log("🧾 Variabel yang dikirim ke Hasura:");
-        console.log(JSON.stringify(mutationVariables, null, 2));
+          console.log("🧾 Variabel yang dikirim ke Hasura:");
+          console.log(JSON.stringify(mutationVariables, null, 2));
 
-        console.log("🧩 GraphQL Mutation yang dikirim:");
-        console.log(gqlMutation);
+          console.log("🧩 GraphQL Mutation yang dikirim:");
+          console.log(gqlMutation);
 
-        const response = await configureQuery(fastify, {
-          graph: {
-            method: "mutate",
-            endpoint: process.env.GRAPHQL_API,
-            gqlQuery: gqlMutation,
-            variables: mutationVariables,
-          },
-          query: [],
-        });
-
-        console.log("📊 Response Hasura:");
-        console.log(JSON.stringify(response, null, 2));
-
-        console.log("🔢 unique_trx dibuat:", unique_trx);
-
-        const variables = new Variables();
-        variables.set("unique_trx", unique_trx);
-        await taskService.complete(task, variables);
-
-        console.log("✅ Task Selesai:", task.id);
-
-      } catch (error) {
-        console.error("❌ Error saat memproses task:", error.message);
-        console.error(error);
-
-        await handleFailureDefault(task, {
-          errorMessage: error.message,
-          errorDetails: error.stack,
-          retries: 0,
-          retryTimeout: 1000,
-        });
-      }
-    });
-
-
-    client.subscribe("getInstanceInternalPrepare", async function ({ task, taskService }) {
-      console.log("🚀 Task Dijalankan:", task.id);
-      try {
-        const proc_inst_id = task.processInstanceId;
-        const consolidation_id = task.variables.get("id") ?? null;
-        const gqlMutation = `
-                                mutation InsertPrepareInternal(
-                                    $proc_inst_id: String!,
-                                    $consolidation_id: Int
-                                ) {
-                                    insert_prepare_internal(
-                                        objects: {
-                                            proc_inst_id: $proc_inst_id,
-                                            consolidation_id: $consolidation_id
-                                        }
-                                    ) {
-                                        affected_rows
-                                        returning {
-                                            id
-                                            consolidation_id
-                                            proc_inst_id
-                                        }
-                                    }
-                                }
-                            `;
-        const response = await configureQuery(fastify, {
-          graph: {
-            method: "mutate",
-            endpoint: process.env.GRAPHQL_API,
-            gqlQuery: gqlMutation,
-            variables: {
-              proc_inst_id,
-              consolidation_id
+          const response = await configureQuery(fastify, {
+            graph: {
+              method: "mutate",
+              endpoint: process.env.GRAPHQL_API,
+              gqlQuery: gqlMutation,
+              variables: mutationVariables,
             },
-          },
-          query: [],
-        });
+            query: [],
+          });
 
-        const hasil = response?.data?.graph?.insert_prepare_internal;
-        if (!hasil || hasil.affected_rows === 0) {
-          console.warn("⚠️ Tidak ada baris yang dimasukkan ke prepare_internal");
-        } else {
-          console.log("✅ Baris dimasukkan:", hasil.returning);
+          console.log("📊 Response Hasura:");
+          console.log(JSON.stringify(response, null, 2));
+
+          console.log("🔢 unique_trx dibuat:", unique_trx);
+
+          const variables = new Variables();
+          variables.set("unique_trx", unique_trx);
+          await taskService.complete(task, variables);
+
+          console.log("✅ Task Selesai:", task.id);
+        } catch (error) {
+          console.error("❌ Error saat memproses task:", error.message);
+          console.error(error);
+
+          await handleFailureDefault(task, {
+            errorMessage: error.message,
+            errorDetails: error.stack,
+            retries: 0,
+            retryTimeout: 1000,
+          });
         }
-        // ✅ Selesaikan task Camunda
-        await taskService.complete(task);
-        console.log("✅ Task Selesai:", task.id);
-      } catch (error) {
-        console.error("❌ Error saat memproses task:", error.message);
-
-        await handleFailureDefault(task, {
-          errorMessage: error.message,
-          errorDetails: error.stack,
-          retries: 0,
-          retryTimeout: 1000,
-        });
       }
-    });
+    );
+
+    client.subscribe(
+      "getInstanceInternalPrepare",
+      async function ({ task, taskService }) {
+        console.log("🚀 Task Dijalankan:", task.id);
+        try {
+          const proc_inst_id = task.processInstanceId;
+          const consolidation_id = task.variables.get("id") ?? null;
+          const gqlMutation = `
+                        mutation InsertPrepareInternal(
+                            $proc_inst_id: String!,
+                            $consolidation_id: Int
+                        ) {
+                            insert_prepare_internal(
+                                objects: {
+                                    proc_inst_id: $proc_inst_id,
+                                    consolidation_id: $consolidation_id
+                                }
+                            ) {
+                                affected_rows
+                                returning {
+                                    id
+                                    consolidation_id
+                                    proc_inst_id
+                                }
+                            }
+                        }
+                    `;
+          const response = await configureQuery(fastify, {
+            graph: {
+              method: "mutate",
+              endpoint: process.env.GRAPHQL_API,
+              gqlQuery: gqlMutation,
+              variables: {
+                proc_inst_id,
+                consolidation_id,
+              },
+            },
+            query: [],
+          });
+
+          const hasil = response?.data?.graph?.insert_prepare_internal;
+          if (!hasil || hasil.affected_rows === 0) {
+            console.warn(
+              "⚠️ Tidak ada baris yang dimasukkan ke prepare_internal"
+            );
+          } else {
+            console.log("✅ Baris dimasukkan:", hasil.returning);
+          }
+          // ✅ Selesaikan task Camunda
+          await taskService.complete(task);
+          console.log("✅ Task Selesai:", task.id);
+        } catch (error) {
+          console.error("❌ Error saat memproses task:", error.message);
+
+          await handleFailureDefault(task, {
+            errorMessage: error.message,
+            errorDetails: error.stack,
+            retries: 0,
+            retryTimeout: 1000,
+          });
+        }
+      }
+    );
 
     client.subscribe("getWipPrepare", async function ({ task, taskService }) {
       console.log("🚀 Task Dijalankan:", task.id);
@@ -4669,27 +5510,27 @@ import("camunda-external-task-client-js").then(
         }
         console.log("📦 new stock_item_id:", newStockItemId);
         const gqlMutation = `
-                        mutation UpdateInternalConsolidation(
-                            $proc_inst_id: String!,
-                            $request_id: Int,
-                            $stock_item_wip: Int!
-                                        ) {
-                            update_internal_consolidation_process(
-                                where: { proc_inst_id: { _eq: $proc_inst_id } },
-                                _set: {
-                                    stock_item_wip: $stock_item_wip,
-                                    request_id: $request_id
-                                }
-                            ) {
-                                affected_rows
-                                returning {
-                                    id
-                                    stock_item_wip
-                                    request_id
-                                }
-                            }
+                mutation UpdateInternalConsolidation(
+                    $proc_inst_id: String!,
+                    $request_id: Int,
+                    $stock_item_wip: Int!
+                                ) {
+                    update_internal_consolidation_process(
+                        where: { proc_inst_id: { _eq: $proc_inst_id } },
+                        _set: {
+                            stock_item_wip: $stock_item_wip,
+                            request_id: $request_id
                         }
-                    `;
+                    ) {
+                        affected_rows
+                        returning {
+                            id
+                            stock_item_wip
+                            request_id
+                        }
+                    }
+                }
+            `;
 
         const updateQuery = {
           graph: {
@@ -4705,7 +5546,10 @@ import("camunda-external-task-client-js").then(
           query: [],
         };
 
-        console.log("📤 Data siap dikirim ke internal_consolidation_process:", updateQuery);
+        console.log(
+          "📤 Data siap dikirim ke internal_consolidation_process:",
+          updateQuery
+        );
         const response = await configureQuery(fastify, updateQuery);
         console.log("📊 Response Hasura:", JSON.stringify(response, null, 2));
         // ✅ Selesaikan task
@@ -4731,15 +5575,15 @@ import("camunda-external-task-client-js").then(
           const proc_inst_id = task.processInstanceId;
           const parent_inst_id = task.variables.get("parent_inst_id") ?? null;
           const gqlMutation = `
-                                        mutation UpdateMiOrder($proc_inst_id: String!, $parent_inst_id: String) {
-                                            update_mi_order(
-                                                where: { parent_inst_id: { _eq: $parent_inst_id } },
-                                                _set: { proc_inst_id: $proc_inst_id }
-                                            ) {
-                                                affected_rows
-                                            }
-                                        }
-                                    `;
+                    mutation UpdateMiOrder($proc_inst_id: String!, $parent_inst_id: String) {
+                        update_mi_order(
+                            where: { parent_inst_id: { _eq: $parent_inst_id } },
+                            _set: { proc_inst_id: $proc_inst_id }
+                        ) {
+                            affected_rows
+                        }
+                    }
+                `;
           const response = await configureQuery(fastify, {
             graph: {
               method: "mutate",
@@ -4753,7 +5597,7 @@ import("camunda-external-task-client-js").then(
             query: [],
           });
           const hasil = response?.data?.[0].graph?.update_mi_order;
-          console.log("hasilll", JSON.stringify(hasil, null, 2))
+          console.log("hasilll", JSON.stringify(hasil, null, 2));
           if (!hasil || hasil.affected_rows === 0) {
             console.warn("⚠️ Tidak ada baris yang diperbarui di mi_order");
           } else {
@@ -4774,245 +5618,8 @@ import("camunda-external-task-client-js").then(
       }
     );
 
-    client.subscribe("updateReturDone", async function ({ task, taskService }) {
-      console.log("🚀 Task Dijalankan:", task.id);
-
-      // 🔹 Fungsi ambil invoice dari BigCapital
-      async function getInvoice(invoice) {
-        try {
-          const response = await axios.get(
-            `${BIGCAPITAL_API}/sales/invoices?search_keyword=${invoice}`,
-            {
-              headers: {
-                "Content-Type": "application/json",
-                "x-access-token": `${BIGCAPITAL_TOKEN}`,
-                "organization-id": `${BIGCAPITAL_ORGANIZATION_ID}`,
-              },
-            }
-          );
-          const invoiceData = response.data.sales_invoices.find(
-            (i) => i.invoice_no === invoice
-          );
-          return invoiceData;
-        } catch (error) {
-          console.error("❌ Gagal get invoice:", error.message);
-          throw error;
-        }
-      }
-
-      try {
-        const proc_inst_id = task.processInstanceId;
-        const invoice = task.variables.get("invoice");
-
-        // 🔹 Update status mo_retur_receive menjadi Completed
-        const gqlMutation = `
-      mutation UpdateMoReturReceive($proc_inst_id: String!, $status: String) {
-        update_mo_retur_receive(
-          where: { proc_inst_id: { _eq: $proc_inst_id } },
-          _set: { task_def_key: $status }
-        ) {
-          affected_rows
-        }
-      }
-    `;
-
-        const response = await configureQuery(fastify, {
-          graph: {
-            method: "mutate",
-            endpoint: process.env.GRAPHQL_API,
-            gqlQuery: gqlMutation,
-            variables: {
-              proc_inst_id,
-              status: "Completed",
-            },
-          },
-          query: [],
-        });
-
-        const hasil = response?.data?.[0].graph?.update_mo_retur_receive;
-        console.log(hasil)
-        if (!hasil || hasil.affected_rows === 0) {
-          console.warn(
-            `⚠️ Tidak ada baris yang diperbarui di mo_retur_receive untuk proc_inst_id ${proc_inst_id}`
-          );
-        } else {
-          console.log(
-            `✅ ${hasil.affected_rows} baris berhasil diperbarui di mo_retur_receive`
-          );
-        }
-
-        // 🔹 Ambil data invoice dari BigCapital
-        const invoiceData = await getInvoice(invoice);
-        if (!invoiceData) throw new Error(`Invoice ${invoice} tidak ditemukan`);
-
-        // 🔹 Ambil data retur dari GraphQL
-        const gqlQueryRetur = `
-      query MyQuery($invoice: String!) {
-        mo_retur(where: {invoice: {_eq: $invoice}}) {
-          invoice
-          part_pk
-          quantity_retur
-          product_retur_date
-        }
-      }
-    `;
-
-        const responseRetur = await configureQuery(fastify, {
-          graph: {
-            method: "query",
-            endpoint: process.env.GRAPHQL_API,
-            gqlQuery: gqlQueryRetur,
-            variables: { invoice },
-          },
-          query: [],
-        });
-
-        const returData = responseRetur?.data?.[0].graph?.mo_retur || [];
-        if (returData.length === 0)
-          throw new Error(`Tidak ada data retur untuk invoice ${invoice}`);
-
-        // 🔹 Gabungkan retur (mo_retur) dengan entries dari invoice berdasarkan part_pk <-> item_id
-        const entries = returData
-          .map((item, idx) => {
-            const matchedEntry = invoiceData.entries.find(
-              (entry) => entry.item_id === item.part_pk
-            );
-
-            if (!matchedEntry) {
-              console.warn(
-                `⚠️ Produk dengan part_pk ${item.part_pk} tidak ditemukan di invoice ${invoice}`
-              );
-              return null;
-            }
-
-            return {
-              index: idx + 1,
-              item_id: item.part_pk,
-              quantity: item.quantity_retur,
-              rate: matchedEntry.rate,
-            };
-          })
-          .filter(Boolean); // buang yang null
-
-        if (entries.length === 0)
-          throw new Error(`Tidak ada item retur yang cocok dengan invoice.`);
-
-        console.log("🧾 Entries hasil mapping:", entries);
-        const paymentDate = new Date().toISOString().split("T")[0];
-        // 🔹 Siapkan payload untuk BigCapital Credit Note
-        const bigcapitalPayload = {
-          customer_id: invoiceData.customer_id,
-          credit_note_date: paymentDate,
-          reference_no: invoiceData.invoice_no,
-          open: false,
-          entries,
-        };
-
-        console.log("📦 Payload BigCapital:", bigcapitalPayload);
-
-        // 🔹 Kirim ke BigCapital
-        let bigcapitalResult = null;
-        try {
-          const bigcapitalResponse = await axios.post(
-            `${BIGCAPITAL_API}/sales/credit_notes`,
-            bigcapitalPayload,
-            {
-              headers: {
-                "Content-Type": "application/json",
-                "x-access-token": `${BIGCAPITAL_TOKEN}`,
-                "organization-id": `${BIGCAPITAL_ORGANIZATION_ID}`,
-              },
-            }
-          );
-          bigcapitalResult = bigcapitalResponse.data;
-          console.log("✅ Credit Note berhasil dibuat:", bigcapitalResult);
-        } catch (err) {
-          console.error("❌ Bigcapital API error:", err.message);
-          bigcapitalResult = { error: err.message };
-          throw err.message;
-        }
-
-        // 🔹 Buat payment receive (pelunasan otomatis)
-        try {
-          const paymentDate = new Date().toISOString().split("T")[0];
-          const paymentData = {
-            customer_id: invoiceData.customer_id,
-            payment_date: paymentDate,
-            deposit_account_id: 1000,
-            amount: invoiceData.due_amount,
-            entries: [
-              {
-                invoice_id: invoiceData.id,
-                payment_amount: invoiceData.due_amount,
-              },
-            ],
-          };
-          const paymentResponse = await axios.post(
-            `${BIGCAPITAL_API}/sales/payment_receives`,
-            paymentData,
-            {
-              headers: {
-                "Content-Type": "application/json",
-                "x-access-token": `${BIGCAPITAL_TOKEN}`,
-                "organization-id": `${BIGCAPITAL_ORGANIZATION_ID}`,
-              },
-            }
-          );
-
-          console.log("💰 Payment berhasil dibuat:", paymentResponse.data);
-        } catch (error) {
-          try {
-            const deliveryResponse = await axios.post(
-              `${BIGCAPITAL_API}/sales/invoices/${invoiceData.id}/deliver`,
-            );
-            const paymentDate = new Date().toISOString().split("T")[0];
-            const paymentData = {
-              customer_id: invoiceData.customer_id,
-              payment_date: paymentDate,
-              deposit_account_id: 1000,
-              amount: invoiceData.due_amount,
-              entries: [
-                {
-                  invoice_id: invoiceData.id,
-                  payment_amount: invoiceData.due_amount,
-                },
-              ],
-            };
-            const paymentResponse = await axios.post(
-              `${BIGCAPITAL_API}/sales/payment_receives`,
-              paymentData,
-              {
-                headers: {
-                  "Content-Type": "application/json",
-                  "x-access-token": `${BIGCAPITAL_TOKEN}`,
-                  "organization-id": `${BIGCAPITAL_ORGANIZATION_ID}`,
-                },
-              }
-            );
-          } catch (error) {
-            console.error("❌ Gagal melakukan delivery sebelum payment receive:", error.message);
-            throw error.message;
-          }
-          console.error("❌ Gagal membuat payment receive:", error.message);
-          throw error.message;
-        }
-
-        // ✅ Selesaikan task di Camunda
-        await taskService.complete(task);
-        console.log("✅ Task Selesai:", task.id);
-      } catch (error) {
-        console.error("❌ Error saat memproses task:", error.message);
-        await handleFailureDefault(task, {
-          errorMessage: error.message,
-          errorDetails: error.stack,
-          retries: 0,
-          retryTimeout: 1000,
-        });
-      }
-    });
-
     client.subscribe("Update_Last_SO", async function ({ task, taskService }) {
-      console.log("?? Task Dijalankan:", task.id);
+      console.log("🚀 Task Dijalankan:", task.id);
 
       const inventree = axios.create({
         baseURL: `${process.env.SERVER_INVENTREE}/api`,
@@ -5031,22 +5638,35 @@ import("camunda-external-task-client-js").then(
 
           console.log("Cek exist:", JSON.stringify(exist.data, null, 2));
 
-          const result = exist.data?.results ?? [];
-          if (result.length > 0) {
-            const paramId = result[0].pk;
-            await inventree.patch(`/part/parameter/${paramId}/`, { data: value });
-            console.log(`?? Update parameter ${paramId} (template=${template}) OK`);
+          if (exist.data?.results?.length > 0) {
+            const paramId = exist.data.results[0].pk;
+
+            await inventree.patch(`/part/parameter/${paramId}/`, {
+              data: value,
+            });
+
+            console.log(
+              `♻️ Update parameter ${paramId} (template=${template}) OK`
+            );
           } else {
-            await inventree.post(`/part/parameter/`, {
+            await inventree.post("/part/parameter/", {
               part: part_pk,
               template,
               data: value,
             });
-            console.log(`? Insert parameter (template=${template}) OK`);
+
+            console.log(`✅ Insert parameter (template=${template}) OK`);
           }
         } catch (err) {
-          console.error(`? Gagal upsert parameter (template=${template}):`, err.message);
-          if (err.response?.data) console.error("Response data:", err.response.data);
+          console.error(
+            `❌ Gagal upsert parameter (template=${template}):`,
+            err.message
+          );
+
+          if (err.response?.data) {
+            console.error("Response data:", err.response.data);
+          }
+
           throw err;
         }
       };
@@ -5054,71 +5674,72 @@ import("camunda-external-task-client-js").then(
       try {
         const type = task.variables.get("type");
         const part_id = task.variables.get("part_id");
-        const location_id = task.variables.get("location_id");   // WAJIB ada untuk query stock
+        const location_id = task.variables.get("location_id");
         const today = new Date().toISOString().split("T")[0];
 
         if (type === "System part_id") {
-          const stockResponse = await inventree.get(
-            `/stock/?part=${part_id}&location=${location_id}`
-          );
-          console.log("STOCK RESPONSE:", JSON.stringify(stockResponse.data, null, 2));
-
-          const stockList = stockResponse.data?.results ?? [];
-          for (const stock of stockList) {
-            console.log("PK ditemukan:", stock.pk);
-
-            await inventree.patch(`/stock/${stock.pk}/`, {
-              notes: "QC CHECK",
-            });
-
-            console.log(`? PK ${stock.pk} berhasil diupdate (notes = QC CHECK)`);
-          }
-
-          // ?? GRAPH QL QUERY
           const dataQuery = {
             graph: {
               method: "query",
               endpoint: GRAPHQL_API,
               gqlQuery: `query MyQuery($part_id: Int!) {
-                        countUnfinished: stock_opname_aggregate(
-                            where: {
-                                part_id: { _eq: $part_id }
-                                status: { _neq: "Finish" }
-                                type: { _eq: "System part_id" }
-                            }
-                        ) {
-                            aggregate {
-                                count
-                            }
-                        }
-                    }`,
+            countUnfinished: stock_opname_aggregate(
+                where: {
+                    part_id: { _eq: $part_id }
+                    status: { _neq: "Finish" }
+                    type: { _eq: "System part_id" }
+                }
+            ) {
+                aggregate {
+                    count
+                }
+            }
+          }`,
               variables: { part_id },
             },
             query: [],
           };
 
           const responseQuery = await configureQuery(fastify, dataQuery);
-          console.log("?? RESPONSE QUERY:", JSON.stringify(responseQuery, null, 2));
+          console.log(
+            "🔥 RESPONSE QUERY:",
+            JSON.stringify(responseQuery, null, 2)
+          );
 
           const countUnfinished =
-            responseQuery?.data?.[0]?.graph?.countUnfinished?.aggregate?.count ?? 0;
+            responseQuery?.data?.[0]?.graph?.countUnfinished?.aggregate
+              ?.count ?? 0;
 
           console.log("Jumlah stock_opname belum finish:", countUnfinished);
 
-          // ? UPDATE PARAMETER JIKA SEMUA FINISH
+          const stockResponse = await inventree.get(
+            `/stock/?part=${part_id}&location=${location_id}`
+          );
+          console.log(
+            "STOCK RESPONSE:",
+            JSON.stringify(stockResponse.data, null, 2)
+          );
+          const stockList = stockResponse.data?.results ?? [];
+          for (const stock of stockList) {
+            console.log("PK ditemukan:", stock.pk);
+            await inventree.patch(`/stock/${stock.pk}/`, {
+              notes: "QC CHECK",
+            });
+            console.log(`✔ PK ${stock.pk} berhasil diupdate (notes=QC CHECK)`);
+          }
           if (countUnfinished === 0) {
             await upsertParameter(part_id, 6, today);
-            console.log("? Eksekusi upsertParameter karena count = 0");
+            console.log("✔ Eksekusi upsertParameter karena count = 0");
           } else {
-            console.log("? Lewati upsertParameter karena masih ada SO belum finish");
+            console.log(
+              "⏳ Lewati upsertParameter karena masih ada SO belum finish"
+            );
           }
         }
 
-        await taskService.complete(task);
-        console.log("?? Task Selesai:", task.id);
-
+        // await taskService.complete(task);
       } catch (error) {
-        console.error("? Error:", error.message);
+        console.error("❌ Error:", error.message);
         await taskService.handleFailure(task, {
           errorMessage: error.message,
           errorDetails: error.stack || "No stack trace",
@@ -5127,621 +5748,5 @@ import("camunda-external-task-client-js").then(
         });
       }
     });
-
-    client.subscribe(
-      "clearMemberGroup",
-      async function ({ task, taskService }) {
-        console.log("🚀 Task Dijalankan:", task.id);
-        try {
-          console.log("🟠🟠ini adalah task clearMemberGroup", task);
-          const initiatorId = task.variables.get("initiatorId");
-
-          // Daftar ID khusus yang hanya tercatat absen tanpa menghilangkan group
-          const specialUserIds = [77001, 70001, 98001, 69001, 82001, "00001"];
-          const isSpecialUser = specialUserIds.includes(Number(initiatorId));
-
-          // Step 1: POST ke LDAP API untuk force-remove attendance (hanya jika bukan special user)
-          let forceRemoveResult = null;
-          if (!isSpecialUser) {
-            try {
-              const forceRemoveResponse = await axios.post(
-                `${process.env.LDAP_API_MANAGE}/attendance/force-remove`,
-                { uid: initiatorId },
-                {
-                  headers: {
-                    "Content-Type": "application/json",
-                  },
-                }
-              );
-              forceRemoveResult = forceRemoveResponse.data;
-              console.log("✅ LDAP Force-Remove Response:", forceRemoveResult);
-            } catch (ldapError) {
-              console.error(
-                "❌ Error calling LDAP force-remove API:",
-                ldapError.message
-              );
-              forceRemoveResult = { success: false, error: ldapError.message };
-            }
-          } else {
-            console.log(
-              `ℹ️ User ${initiatorId} adalah special user, skip force-remove dari group`
-            );
-          }
-
-          await taskService.complete(task);
-          console.log("✅ Task Selesai:", task.id);
-        } catch (error) {
-          console.error("❌ Error saat memproses task:", error.message);
-
-          await taskService.handleFailure(task, {
-            errorMessage: error.message,
-            errorDetails: error.stack,
-            retries: 0,
-            retryTimeout: 1000,
-          });
-        }
-      }
-    );
-
-    client.subscribe("notifyUser", async function ({ task, taskService }) {
-      const taskStartTime = Date.now();
-      console.log("🚀 Task notifyUser Dijalankan:", task.id);
-      console.log("⏱️ Task Start Time:", new Date().toISOString());
-
-      const sentMessages = [];
-      const failedMessages = [];
-
-      try {
-        // 📦 Ambil variabel dari Camunda
-        const parseStartTime = Date.now();
-        const actionLogRaw = task.variables.get("actionLog");
-        const requestorUid = task.variables.get("requestor");
-
-        console.log(
-          "📋 actionLog raw:",
-          typeof actionLogRaw,
-          actionLogRaw ? `(${actionLogRaw.length} chars)` : "null"
-        );
-        console.log("👤 requestor uid:", requestorUid);
-
-        // ✅ Parse JSON actionLog
-        let actionLog;
-        try {
-          actionLog =
-            typeof actionLogRaw === "string"
-              ? JSON.parse(actionLogRaw)
-              : actionLogRaw;
-        } catch (parseError) {
-          console.error("❌ Gagal parse actionLog JSON:", parseError.message);
-          throw new Error("actionLog bukan JSON valid");
-        }
-
-        const parseDuration = Date.now() - parseStartTime;
-        console.log(`✅ Parsing completed in ${parseDuration}ms`);
-
-        if (!Array.isArray(actionLog) || actionLog.length === 0) {
-          console.log("⚠️ actionLog kosong, tidak ada notifikasi dikirim");
-          await taskService.complete(task);
-          return;
-        }
-
-        console.log(`📊 Total entries di actionLog: ${actionLog.length}`);
-
-        // 🔄 Pisahkan berdasarkan tipe
-        const systemEntries = actionLog.filter((e) => e.tipe === "System");
-        const manualEntries = actionLog.filter((e) => e.tipe === "Manual");
-
-        console.log(`🤖 System entries: ${systemEntries.length}`);
-        console.log(`👨 Manual entries: ${manualEntries.length}`);
-        console.log(
-          `⏱️ Time since task start: ${Date.now() - taskStartTime}ms`
-        );
-
-        // Helper function untuk delay
-        const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-        // Helper untuk send message dengan aggressive timeout + DETAILED TIMING
-        const sendQuick = async (url, payload) => {
-          const attemptStartTime = Date.now();
-
-          try {
-            console.log(`   ⏱️ [WhatsApp Attempt 1] Starting POST request...`);
-            const response = await axios.post(url, payload, {
-              timeout: 5000, // 5 detik - agresif!
-              headers: { "Content-Type": "application/json" },
-            });
-
-            const duration = Date.now() - attemptStartTime;
-            console.log(`   ✅ [WhatsApp Attempt 1] SUCCESS in ${duration}ms`);
-            console.log(
-              `   ✅ [WhatsApp Response] Status: ${response.status}, Data:`,
-              JSON.stringify(response.data).substring(0, 100)
-            );
-
-            return true;
-          } catch (error) {
-            const firstAttemptDuration = Date.now() - attemptStartTime;
-            console.log(
-              `   ❌ [WhatsApp Attempt 1] FAILED after ${firstAttemptDuration}ms: ${error.message}`
-            );
-            console.log(
-              `   ❌ [WhatsApp Error] Code: ${error.code}, Response: ${error.response?.status}`
-            );
-
-            // Retry 1x dengan 3 detik timeout
-            console.log(
-              `   ⚠️ Retry 1x untuk ${payload.phone} (waiting 500ms)...`
-            );
-            await delay(500);
-
-            const retryStartTime = Date.now();
-            try {
-              console.log(
-                `   ⏱️ [WhatsApp Attempt 2] Starting POST request...`
-              );
-              const response = await axios.post(url, payload, {
-                // timeout: 10000, // 20 detik untuk retry
-                headers: { "Content-Type": "application/json" },
-              });
-
-              const retryDuration = Date.now() - retryStartTime;
-              const totalDuration = Date.now() - attemptStartTime;
-              console.log(
-                `   ✅ [WhatsApp Attempt 2] SUCCESS in ${retryDuration}ms (total with retry: ${totalDuration}ms)`
-              );
-              console.log(
-                `   ✅ [WhatsApp Response] Status: ${response.status}, Data:`,
-                JSON.stringify(response.data).substring(0, 100)
-              );
-
-              return true;
-            } catch (retryError) {
-              const retryDuration = Date.now() - retryStartTime;
-              const totalDuration = Date.now() - attemptStartTime;
-              console.log(
-                `   ❌ [WhatsApp Attempt 2] FAILED after ${retryDuration}ms (total: ${totalDuration}ms): ${retryError.message}`
-              );
-              console.log(
-                `   ❌ [WhatsApp Retry Error] Code: ${retryError.code}, Response: ${retryError.response?.status}`
-              );
-
-              throw retryError;
-            }
-          }
-        };
-
-        // ======================================
-        // 🤖 HANDLE SYSTEM ENTRIES
-        // ======================================
-        console.log(`🔄 Processing ${systemEntries.length} system entries...`);
-        for (const entry of systemEntries) {
-          const { user: uid, groupAdd, groupRemove, before, after } = entry;
-
-          if (!uid) {
-            console.warn("⚠️ Entry System tanpa uid, skip:", entry);
-            continue;
-          }
-
-          const userStartTime = Date.now();
-
-          try {
-            // 📞 Fetch LDAP data
-            const ldapStartTime = Date.now();
-            console.log(`🔍 [${uid}] START Fetch LDAP...`);
-
-            const ldapResponse = await axios.get(
-              `${process.env.LDAP_API_MANAGE}/users/${uid}`,
-              { timeout: 8000 }
-            );
-
-            const ldapDuration = Date.now() - ldapStartTime;
-            console.log(`✅ [${uid}] LDAP fetched in ${ldapDuration}ms`);
-
-            const userData = ldapResponse.data;
-            const phone = userData?.sn;
-            const nama = userData?.cn || userData?.givenName || uid;
-
-            if (!phone) {
-              console.warn(`⚠️ User ${uid} tidak punya phone, skip`);
-              failedMessages.push({ uid, reason: "No phone (sn)" });
-              continue;
-            }
-
-            // 🧾 Build message
-            const msgBuildStart = Date.now();
-            const newGroup = after || groupAdd || "-";
-            const oldGroup = before || groupRemove || "-";
-            const message = `🚨 Hai *${nama} (${uid})* anda sekarang adalah *${newGroup}* yang sebelumnya *${oldGroup}*. \n \n Terima kasih`;
-            const msgBuildDuration = Date.now() - msgBuildStart;
-            console.log(`� [${uid}] Message built in ${msgBuildDuration}ms`);
-
-            // 📲 Send WhatsApp dengan quick timeout
-            const whatsappStartTime = Date.now();
-            console.log(`📤 [${uid}] START Send WhatsApp to ${phone}...`);
-            console.log(
-              `📤 [${uid}] URL: ${process.env.WHATSAPP_NOTIFICATION}/rest-api/send-message`
-            );
-            console.log(
-              `📤 [${uid}] Payload:`,
-              JSON.stringify({
-                phone,
-                message: message.substring(0, 50) + "...",
-              })
-            );
-
-            await sendQuick(
-              `${process.env.WHATSAPP_NOTIFICATION}/rest-api/send-message`,
-              { phone, message }
-            );
-
-            const whatsappDuration = Date.now() - whatsappStartTime;
-            const totalDuration = Date.now() - userStartTime;
-
-            console.log(`✅ [${uid}] WhatsApp sent in ${whatsappDuration}ms`);
-            console.log(
-              `⏱️ [${uid}] TOTAL USER TIME: ${totalDuration}ms (LDAP: ${ldapDuration}ms + Message: ${msgBuildDuration}ms + WhatsApp: ${whatsappDuration}ms)`
-            );
-
-            sentMessages.push({ uid, phone, type: "System" });
-
-            // ⏳ Rate limit
-            await delay(200);
-          } catch (userError) {
-            const errorDuration = Date.now() - userStartTime;
-            console.error(
-              `❌ [${uid}] FAILED after ${errorDuration}ms: ${userError.message}`
-            );
-            console.error(`❌ [${uid}] Error code:`, userError.code);
-            console.error(
-              `❌ [${uid}] Error response:`,
-              userError.response?.status,
-              userError.response?.data
-            );
-            failedMessages.push({
-              uid,
-              reason: userError.message,
-              duration: errorDuration,
-            });
-            // CONTINUE - jangan stop workflow meski gagal
-          }
-        }
-
-        // ======================================
-        // 👨 HANDLE MANUAL ENTRIES - NOTIFY MEMBERS + REQUESTOR
-        // ======================================
-        if (manualEntries.length > 0) {
-          console.log(
-            `🔄 Processing ${manualEntries.length} manual entries...`
-          );
-
-          // 📤 Notify each member (approved + rejected)
-          for (const entry of manualEntries) {
-            const {
-              user: uid,
-              groupAdd,
-              groupRemove,
-              before,
-              after,
-              status,
-            } = entry;
-
-            if (!uid) {
-              console.warn("⚠️ Entry Manual tanpa uid, skip:", entry);
-              continue;
-            }
-
-            const userStartTime = Date.now();
-
-            try {
-              // 📞 Fetch LDAP data
-              const ldapStartTime = Date.now();
-              console.log(`🔍 [MANUAL ${uid}] START Fetch LDAP...`);
-
-              const ldapResponse = await axios.get(
-                `${process.env.LDAP_API_MANAGE}/users/${uid}`,
-                { timeout: 8000 }
-              );
-
-              const ldapDuration = Date.now() - ldapStartTime;
-              console.log(
-                `✅ [MANUAL ${uid}] LDAP fetched in ${ldapDuration}ms`
-              );
-
-              const userData = ldapResponse.data;
-              const phone = userData?.sn;
-              const nama = userData?.cn || userData?.givenName || uid;
-
-              if (!phone) {
-                console.warn(`⚠️ User ${uid} tidak punya phone, skip`);
-                failedMessages.push({
-                  uid,
-                  reason: "No phone (sn)",
-                  type: "Manual",
-                });
-                continue;
-              }
-
-              // 🧾 Build message (sama dengan System)
-              const msgBuildStart = Date.now();
-              let message;
-
-              if (status === "approve") {
-                const newGroup = after || groupAdd || "-";
-                const oldGroup = before || groupRemove || "-";
-                message = `🚨Hai *${nama} (${uid})* anda sekarang adalah *${newGroup}* yang sebelumnya *${oldGroup}*. \n \n Terima kasih`;
-              } else {
-                // rejected
-                message = `🚨Hai *${nama} (${uid})* permintaan alokasi grup Anda ditolak. \n \n Terima kasih`;
-              }
-
-              const msgBuildDuration = Date.now() - msgBuildStart;
-              console.log(
-                `📝 [MANUAL ${uid}] Message built in ${msgBuildDuration}ms`
-              );
-
-              // 📲 Send WhatsApp dengan quick timeout
-              const whatsappStartTime = Date.now();
-              console.log(
-                `📤 [MANUAL ${uid}] START Send WhatsApp to ${phone}...`
-              );
-
-              await sendQuick(
-                `${process.env.WHATSAPP_NOTIFICATION}/rest-api/send-message`,
-                { phone, message }
-              );
-
-              const whatsappDuration = Date.now() - whatsappStartTime;
-              const totalDuration = Date.now() - userStartTime;
-
-              console.log(
-                `✅ [MANUAL ${uid}] WhatsApp sent in ${whatsappDuration}ms`
-              );
-              console.log(
-                `⏱️ [MANUAL ${uid}] TOTAL USER TIME: ${totalDuration}ms (LDAP: ${ldapDuration}ms + Message: ${msgBuildDuration}ms + WhatsApp: ${whatsappDuration}ms)`
-              );
-
-              sentMessages.push({ uid, phone, type: "Manual Member", status });
-
-              // ⏳ Rate limit
-              await delay(200);
-            } catch (userError) {
-              const errorDuration = Date.now() - userStartTime;
-              console.error(
-                `❌ [MANUAL ${uid}] FAILED after ${errorDuration}ms: ${userError.message}`
-              );
-              console.error(`❌ [MANUAL ${uid}] Error code:`, userError.code);
-              console.error(
-                `❌ [MANUAL ${uid}] Error response:`,
-                userError.response?.status,
-                userError.response?.data
-              );
-              failedMessages.push({
-                uid,
-                reason: userError.message,
-                duration: errorDuration,
-                type: "Manual Member",
-              });
-              // CONTINUE - jangan stop workflow meski gagal
-            }
-          }
-
-          // 📤 Notify requestor dengan summary (jika ada)
-          if (requestorUid) {
-            const requestorStartTime = Date.now();
-
-            try {
-              const ldapStartTime = Date.now();
-              console.log(`🔍 [REQUESTOR ${requestorUid}] START Fetch LDAP...`);
-
-              const requestorLdapResponse = await axios.get(
-                `${process.env.LDAP_API_MANAGE}/users/${requestorUid}`,
-                { timeout: 8000 }
-              );
-
-              const ldapDuration = Date.now() - ldapStartTime;
-              console.log(
-                `✅ [REQUESTOR ${requestorUid}] LDAP fetched in ${ldapDuration}ms`
-              );
-
-              const requestorData = requestorLdapResponse.data;
-              const requestorPhone = requestorData?.sn;
-              const requestorNama =
-                requestorData?.cn || requestorData?.givenName || requestorUid;
-
-              if (requestorPhone) {
-                // 📝 Build summary - Fetch nama untuk setiap user
-                const msgBuildStart = Date.now();
-
-                // 🔄 Fetch nama untuk approved users
-                const approvedList = [];
-                for (const e of manualEntries.filter(
-                  (e) => e.status === "approve"
-                )) {
-                  try {
-                    const userLdapResp = await axios.get(
-                      `${process.env.LDAP_API_MANAGE}/users/${e.user}`,
-                      { timeout: 5000 }
-                    );
-                    const userName =
-                      userLdapResp.data?.cn ||
-                      userLdapResp.data?.givenName ||
-                      e.user;
-                    const newGroup = e.after || e.groupAdd || "-";
-                    const oldGroup = e.before || e.groupRemove || "-";
-                    approvedList.push(`${userName}: ${oldGroup} → ${newGroup}`);
-                  } catch (err) {
-                    console.warn(
-                      `⚠️ Failed to fetch name for ${e.user}, using UID`
-                    );
-                    const newGroup = e.after || e.groupAdd || "-";
-                    const oldGroup = e.before || e.groupRemove || "-";
-                    approvedList.push(`${e.user}: ${oldGroup} → ${newGroup}`);
-                  }
-                }
-
-                // 🔄 Fetch nama untuk rejected users
-                const rejectedList = [];
-                for (const e of manualEntries.filter(
-                  (e) => e.status === "reject"
-                )) {
-                  try {
-                    const userLdapResp = await axios.get(
-                      `${process.env.LDAP_API_MANAGE}/users/${e.user}`,
-                      { timeout: 5000 }
-                    );
-                    const userName =
-                      userLdapResp.data?.cn ||
-                      userLdapResp.data?.givenName ||
-                      e.user;
-                    rejectedList.push(
-                      `${userName}: permintaan alokasi ditolak`
-                    );
-                  } catch (err) {
-                    console.warn(
-                      `⚠️ Failed to fetch name for ${e.user}, using UID`
-                    );
-                    rejectedList.push(`${e.user}: permintaan alokasi ditolak`);
-                  }
-                }
-
-                let requestorMessage = `Hai ${requestorNama}, berikut hasil permintaan alokasi grup:\n\n`;
-
-                if (approvedList.length > 0) {
-                  requestorMessage += `✅ APPROVED:\n${approvedList.join(
-                    "\n"
-                  )}\n\n`;
-                }
-
-                if (rejectedList.length > 0) {
-                  requestorMessage += `❌ REJECTED:\n${rejectedList.join(
-                    "\n"
-                  )}\n\n`;
-                }
-
-                requestorMessage += "Terima kasih";
-
-                const msgBuildDuration = Date.now() - msgBuildStart;
-                console.log(
-                  `📝 [REQUESTOR ${requestorUid}] Message built in ${msgBuildDuration}ms`
-                );
-
-                // 📲 Send WhatsApp
-                const whatsappStartTime = Date.now();
-                console.log(
-                  `📤 [REQUESTOR ${requestorUid}] START Send WhatsApp to ${requestorPhone}...`
-                );
-
-                await sendQuick(
-                  `${process.env.WHATSAPP_NOTIFICATION}/rest-api/send-message`,
-                  { phone: requestorPhone, message: requestorMessage }
-                );
-
-                const whatsappDuration = Date.now() - whatsappStartTime;
-                const totalDuration = Date.now() - requestorStartTime;
-
-                console.log(
-                  `✅ [REQUESTOR ${requestorUid}] WhatsApp sent in ${whatsappDuration}ms`
-                );
-                console.log(
-                  `⏱️ [REQUESTOR ${requestorUid}] TOTAL TIME: ${totalDuration}ms (LDAP: ${ldapDuration}ms + Message: ${msgBuildDuration}ms + WhatsApp: ${whatsappDuration}ms)`
-                );
-
-                sentMessages.push({
-                  uid: requestorUid,
-                  phone: requestorPhone,
-                  type: "Requestor Summary",
-                });
-              }
-            } catch (requestorError) {
-              const errorDuration = Date.now() - requestorStartTime;
-              console.error(
-                `❌ [REQUESTOR ${requestorUid}] FAILED after ${errorDuration}ms: ${requestorError.message}`
-              );
-              console.error(
-                `❌ [REQUESTOR ${requestorUid}] Error code:`,
-                requestorError.code
-              );
-              console.error(
-                `❌ [REQUESTOR ${requestorUid}] Error response:`,
-                requestorError.response?.status,
-                requestorError.response?.data
-              );
-
-              failedMessages.push({
-                uid: requestorUid,
-                reason: requestorError.message,
-                duration: errorDuration,
-                type: "Requestor Summary",
-              });
-              // CONTINUE - jangan stop workflow
-            }
-          }
-        }
-
-        // 📊 Summary log
-        console.log(`\n📊 NOTIFICATION SUMMARY Task ${task.id}:`);
-        const totalTaskDuration = Date.now() - taskStartTime;
-
-        console.log(`\n${"=".repeat(80)}`);
-        console.log(
-          `⏱️ TOTAL TASK DURATION: ${totalTaskDuration}ms (${(
-            totalTaskDuration / 1000
-          ).toFixed(2)}s)`
-        );
-        console.log(`✅ Berhasil kirim: ${sentMessages.length} pesan`);
-        console.log(`❌ Gagal kirim: ${failedMessages.length} pesan`);
-
-        if (sentMessages.length > 0) {
-          console.log(
-            "\n✅ Sent details:",
-            JSON.stringify(sentMessages, null, 2)
-          );
-        }
-
-        if (failedMessages.length > 0) {
-          console.log(
-            "\n❌ Failed details:",
-            JSON.stringify(failedMessages, null, 2)
-          );
-
-          // Show average failed duration
-          const failedWithDuration = failedMessages.filter((f) => f.duration);
-          if (failedWithDuration.length > 0) {
-            const avgFailedDuration =
-              failedWithDuration.reduce((sum, f) => sum + f.duration, 0) /
-              failedWithDuration.length;
-            console.log(
-              `\n⏱️ Average failed duration: ${avgFailedDuration.toFixed(0)}ms`
-            );
-          }
-        }
-
-        console.log(`${"=".repeat(80)}\n`);
-
-        // ✅ COMPLETE TASK - meski ada yang gagal
-        await taskService.complete(task);
-        console.log(
-          `✅ Task notifyUser Completed in ${totalTaskDuration}ms (${(
-            totalTaskDuration / 1000
-          ).toFixed(2)}s):`,
-          task.id
-        );
-      } catch (error) {
-        console.error(
-          "❌ Error saat memproses task notifyUser:",
-          error.message
-        );
-        console.error("Stack trace:", error.stack);
-
-        // ❌ FAIL task untuk retry
-        await taskService.handleFailure(task, {
-          errorMessage: error.message,
-          errorDetails: error.stack,
-          retries: 3,
-          retryTimeout: 5000,
-        });
-      }
-    });
-
   }
 );

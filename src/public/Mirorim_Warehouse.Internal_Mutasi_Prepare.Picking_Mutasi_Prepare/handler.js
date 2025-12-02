@@ -1,7 +1,11 @@
 const { Source } = require("graphql");
 const { configureQuery } = require("../../controller/controllerConfig");
 const camundaConfig = require("../../utils/camunda/camundaConfig");
-const { transferStock, getDescStock } = require("../../utils/inventree/inventreeActions");
+const {
+  transferStock,
+  getDescStock,
+  createStockTransferEqual
+} = require("../../utils/inventree/inventreeActions");
 const fastify = require("fastify");
 const axios = require("axios");
 const GRAPHQL_API = process.env.GRAPHQL_API;
@@ -27,9 +31,25 @@ const eventHandlers = {
 
           console.log("source_id:", stockPk);
 
-          const stockTransfer = await transferStock(stockPk, quantity, locationPk, notesTransfer);
-          stockGetDesc = await getDescStock(partPk, locationPk);
+          if (item.quantity_staging == item.quantity_data) {
+            const newPrimary = await createStockTransferEqual(
+              partPk,
+              0,
+              stockPk
+            );
+            console.log("createStockTransferEqual result:", newPrimary);
+            primary_stock = newPrimary;
+          } else {
+            primary_stock = item.source_id;
+          }
 
+          const stockTransfer = await transferStock(
+            stockPk,
+            quantity,
+            locationPk,
+            notesTransfer
+          );
+          stockGetDesc = await getDescStock(partPk, locationPk);
           console.log("stockGetDesc:", stockGetDesc);
 
           // Payload Camunda untuk mode normal
@@ -39,20 +59,28 @@ const eventHandlers = {
             instance: instanceId,
             variables: {
               variables: {
-                product_name: { value: item.product_name || null, type: "String" },
-                coordinator: { value: "InventoryPrepareCoordinator", type: "String" },
+                product_name: {
+                  value: item.product_name || null,
+                  type: "String",
+                },
+                coordinator: {
+                  value: "InventoryPrepareCoordinator",
+                  type: "String",
+                },
                 part_id: { value: item.part_id, type: "Integer" },
                 source_stock: { value: stockGetDesc, type: "Integer" },
-                primary_stock: { value: item.source_id, type: "Integer" },
+                primary_stock: { value: primary_stock, type: "Integer" },
                 id: { value: item.id, type: "Integer" },
-                quantity_staging: { value: item.quantity_staging, type: "Integer" },
+                quantity_staging: {
+                  value: item.quantity_staging,
+                  type: "Integer",
+                },
                 WIPLocation: { value: 1000006, type: "Integer" },
                 table_reference: { value: "mutasi_request", type: "String" },
                 printUlang: { value: false, type: "Boolean" },
               },
             },
           };
-
         } else {
           // Payload Camunda untuk print ulang
           dataCamunda = {
@@ -61,14 +89,18 @@ const eventHandlers = {
             instance: instanceId,
             variables: {
               variables: {
-                printUlang: { value: true, type: "Boolean" }
+                printUlang: { value: true, type: "Boolean" },
               },
             },
           };
         }
 
         // Kirim ke Camunda
-        const responseCamunda = await camundaConfig(dataCamunda, instanceId, process);
+        const responseCamunda = await camundaConfig(
+          dataCamunda,
+          instanceId,
+          process
+        );
         console.log("responseCamunda", responseCamunda);
 
         // Jika sukses, lakukan update ke Hasura (kecuali mode printUlang)
@@ -78,8 +110,8 @@ const eventHandlers = {
               console.log("🖨️ Mode print ulang, skip update Hasura.");
               continue;
             }
-          
-            console.log("stockGetDesc:", stockGetDesc);  
+
+            console.log("stockGetDesc:", stockGetDesc);
 
             const dataQuery = {
               graph: {
@@ -112,7 +144,9 @@ const eventHandlers = {
             };
 
             const responseQuery = await configureQuery(fastify, dataQuery);
-            console.log(`Updated mutasi_request_details request_id ${product.request_id}`);
+            console.log(
+              `Updated mutasi_request_details request_id ${product.request_id}`
+            );
             console.log(responseQuery.data);
           }
 
@@ -121,7 +155,6 @@ const eventHandlers = {
             camunda: responseCamunda.data,
           });
         }
-
       } catch (error) {
         console.error(`Error executing handler for event: ${eventKey}`, error);
         throw error;

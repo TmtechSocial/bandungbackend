@@ -1,0 +1,380 @@
+{
+    "display": "form",
+    "components": [
+        {
+            "key": "textField",
+            "type": "textfield",
+            "input": false,
+            "label": "Urgent Notice",
+            "disabled": true,
+            "tableView": true,
+            "persistent": false,
+            "applyMaskOn": "change",
+            "conditional": {
+                "eq": "instant",
+                "show": true,
+                "when": "courier_name"
+            },
+            "customClass": "urgent-alert",
+            "defaultValue": "⚠️ URGENT INSTANT!!!",
+            "validateWhenHidden": false
+        },
+        {
+            "key": "courier_name",
+            "type": "textfield",
+            "input": true,
+            "label": "Nama Kurir",
+            "table": "mo_order",
+            "hidden": true,
+            "tableView": true,
+            "applyMaskOn": "change",
+            "clearOnHide": false,
+            "validateWhenHidden": false
+        },
+        {
+            "key": "user_picker",
+            "type": "textfield",
+            "input": true,
+            "label": "User Picker",
+            "hidden": true,
+            "tableView": true,
+            "applyMaskOn": "change",
+            "clearOnHide": false,
+            "defaultValue": "session.fid",
+            "validateWhenHidden": false
+        },
+        {
+            "key": "user_picker_id",
+            "type": "textfield",
+            "input": true,
+            "label": "User Picker",
+            "hidden": true,
+            "tableView": true,
+            "applyMaskOn": "change",
+            "clearOnHide": false,
+            "defaultValue": "session.uid",
+            "validateWhenHidden": false
+        },
+        {
+            "key": "proc_inst_id",
+            "type": "textfield",
+            "input": true,
+            "label": "Instance ID",
+            "table": "mo_order_shop",
+            "hidden": true,
+            "tableView": true,
+            "applyMaskOn": "change",
+            "clearOnHide": false,
+            "validateWhenHidden": false
+        },
+        {
+            "key": "invoice",
+            "type": "textfield",
+            "input": false,
+            "label": "Invoice",
+            "table": "mo_order_shop",
+            "disabled": true,
+            "tableView": true,
+            "persistent": false,
+            "validateWhenHidden": false
+        },
+        {
+            "key": "resi",
+            "type": "textfield",
+            "input": false,
+            "label": "Resi",
+            "table": "mo_order_shop",
+            "disabled": true,
+            "tableView": true,
+            "persistent": false,
+            "validateWhenHidden": false
+        },
+        {
+            "key": "picked_at",
+            "type": "datetime",
+            "input": true,
+            "label": "Picked Date",
+            "widget": {
+                "mode": "single",
+                "type": "calendar",
+                "format": "yyyy-MM-dd hh:mm a",
+                "locale": "en",
+                "maxDate": null,
+                "minDate": null,
+                "timezone": "Asia/Jakarta",
+                "time_24hr": false,
+                "allowInput": true,
+                "enableTime": true,
+                "noCalendar": false,
+                "hourIncrement": 1,
+                "minuteIncrement": 1,
+                "displayInTimezone": "location",
+                "useLocaleSettings": false
+            },
+            "disabled": true,
+            "timezone": "Asia/Jakarta",
+            "tableView": true,
+            "persistent": false,
+            "applyMaskOn": "change",
+            "clearOnHide": false,
+            "calculateValue": "value = new Date(new Date().getTime() + 7 * 60 * 60 * 1000).toISOString().replace('T', ' ').split('.')[0]",
+            "displayInTimezone": "location",
+            "validateWhenHidden": false
+        },
+        {
+            "key": "products",
+            "type": "datagrid",
+            "input": true,
+            "label": "List Product",
+            "tableView": false,
+            "components": [
+                {
+                    "key": "image_preview",
+                    "html": "<div style='text-align:center;'><img loading='lazy' src='https://mirorim.ddns.net:8111{{ row.image }}' alt='Gambar Produk' style='max-width:100px; height:auto;'/></div>",
+                    "type": "content",
+                    "input": false,
+                    "label": "Gambar Produk",
+                    "tableView": false
+                },
+                {
+                    "key": "image",
+                    "type": "textfield",
+                    "input": true,
+                    "label": "URL Gambar",
+                    "hidden": true,
+                    "apiSource": {
+                        "link": "https://mirorim.ddns.net:8111",
+                        "source": "imageFromPk",
+                        "valueKey": "image"
+                    },
+                    "tableView": false
+                },
+                {
+                    "key": "stock_item_id",
+                    "type": "number",
+                    "input": true,
+                    "label": "Stock Item ID",
+                    "table": "mo_order_shop",
+                    "hidden": true,
+                    "tableView": true,
+                    "applyMaskOn": "change",
+                    "clearOnHide": false,
+                    "validateWhenHidden": false
+                },
+                {
+                    "key": "quantity_convert",
+                    "type": "number",
+                    "input": true,
+                    "label": "Quantity Convert",
+                    "table": "mo_order_shop",
+                    "hidden": true,
+                    "tableView": true,
+                    "applyMaskOn": "change",
+                    "clearOnHide": false,
+                    "validateWhenHidden": false
+                },
+                {
+                    "key": "product_name",
+                    "type": "textarea",
+                    "input": false,
+                    "label": "Nama Product",
+                    "table": "mo_order_shop",
+                    "disabled": true,
+                    "tableView": true,
+                    "persistent": false,
+                    "validateWhenHidden": false
+                },
+                {
+                    "key": "textField",
+                    "type": "textfield",
+                    "input": false,
+                    "label": "Pack",
+                    "disabled": true,
+                    "tableView": true,
+                    "persistent": false,
+                    "applyMaskOn": "change",
+                    "customClass": "urgent-alert",
+                    "defaultValue": "GROSIR",
+                    "customConditional": "show = row.product_name && row.product_name.toLowerCase().includes('grosir pack');",
+                    "validateWhenHidden": false
+                },
+                {
+                    "key": "sku_toko",
+                    "type": "textfield",
+                    "input": false,
+                    "label": "SKU TOKO",
+                    "table": "mo_order_shop",
+                    "disabled": true,
+                    "tableView": true,
+                    "persistent": false,
+                    "customClass": "big-text",
+                    "validateWhenHidden": false
+                },
+                {
+                    "key": "quantity_order",
+                    "type": "textfield",
+                    "input": false,
+                    "label": "Quantity",
+                    "table": "mo_order_shop",
+                    "disabled": true,
+                    "tableView": true,
+                    "persistent": false,
+                    "validateWhenHidden": false
+                },
+                {
+                    "key": "units_information",
+                    "type": "textfield",
+                    "input": false,
+                    "label": "Units",
+                    "disabled": true,
+                    "apiSource": {
+                        "source": "imageFromPk",
+                        "valueKey": "units"
+                    },
+                    "tableView": true,
+                    "persistent": false,
+                    "validateWhenHidden": false
+                },
+                {
+                    "key": "stock_toko",
+                    "type": "number",
+                    "input": false,
+                    "label": "Stock Toko",
+                    "disabled": true,
+                    "apiSource": {
+                        "source": "stockToko",
+                        "valueKey": "quantity"
+                    },
+                    "tableView": true,
+                    "persistent": false,
+                    "validateWhenHidden": false
+                },
+                {
+                    "key": "stock_pk_sku",
+                    "type": "number",
+                    "input": true,
+                    "label": "Stock Pk Sku",
+                    "hidden": true,
+                    "apiSource": {
+                        "source": "stockToko",
+                        "valueKey": "pk"
+                    },
+                    "tableView": true,
+                    "applyMaskOn": "change",
+                    "clearOnHide": false,
+                    "validateWhenHidden": false
+                },
+                {
+                    "key": "warning_stock",
+                    "html": "<div style='background-color: #ffcccc; color: red; font-weight: bold; padding: 10px; border-radius: 5px;'>⚠️ Quantity Toko Kurang</div>",
+                    "type": "content",
+                    "label": "Kecukupan",
+                    "customConditional": "show = (row && Number(row.quantity_convert) > Number(row.stock_toko));"
+                },
+                {
+                    "key": "check",
+                    "type": "checkbox",
+                    "input": true,
+                    "label": "Check",
+                    "tableView": true,
+                    "applyMaskOn": "change",
+                    "clearOnHide": false,
+                    "calculateValue": "if (row && row.picked_status === 'picked') { value = true; }",
+                    "customConditional": "if (row) { if (row.picked_status === 'picked') { show = false; } else { component.disabled = Number(row.quantity_order) > Number(row.stock_toko); show = true; } }",
+                    "validateWhenHidden": false
+                },
+                {
+                    "key": "picked_status",
+                    "type": "textfield",
+                    "input": true,
+                    "label": "Status Picked",
+                    "table": "mo_order_shop",
+                    "hidden": true,
+                    "tableView": true,
+                    "applyMaskOn": "change",
+                    "clearOnHide": false,
+                    "validateWhenHidden": false
+                }
+            ]
+        },
+        {
+            "key": "action",
+            "data": {
+                "values": [
+                    {
+                        "label": "Submit",
+                        "value": "submit"
+                    },
+                    {
+                        "label": "Save",
+                        "value": "save"
+                    }
+                ]
+            },
+            "type": "select",
+            "input": true,
+            "label": "Action",
+            "widget": {
+                "type": "choicesjs"
+            },
+            "tableView": true,
+            "customOptions": {
+                "searchEnabled": false
+            },
+            "validateWhenHidden": false
+        },
+        {
+            "key": "checkAll",
+            "html": "<div style='background-color: #ffcccc; color: red; font-weight: bold; padding: 10px; border-radius: 5px;'>⚠️ ADA PRODUCT YANG BELUM DI CHECKLIST!!!</div>",
+            "type": "content",
+            "label": "",
+            "customConditional": "show = data.action === 'submit' && !(data.products || []).every(p => p.check === true);"
+        },
+        {
+            "key": "validasi",
+            "data": {
+                "values": [
+                    {
+                        "label": "Yakin",
+                        "value": "yes"
+                    }
+                ]
+            },
+            "type": "select",
+            "input": true,
+            "label": "Yakin untuk submit?",
+            "widget": "choicesjs",
+            "tableView": true,
+            "customOptions": {
+                "searchEnabled": false
+            },
+            "validateWhenHidden": false
+        },
+        {
+            "key": "status_proses",
+            "type": "textfield",
+            "input": true,
+            "label": "Status",
+            "hidden": true,
+            "disabled": true,
+            "tableView": true,
+            "applyMaskOn": "change",
+            "clearOnHide": false,
+            "calculateValue": "value = (data.products || []).every(p => p.check === true) ? 'box' : 'refund'",
+            "validateWhenHidden": false
+        },
+        {
+            "key": "submit",
+            "type": "button",
+            "event": "submit",
+            "input": true,
+            "label": "Submit",
+            "action": "event",
+            "tableView": false,
+            "customClass": "ml-auto mt-3",
+            "saveOnEnter": false,
+            "showValidations": false,
+            "customConditional": "const allChecked = (data.products || []).every(p => p.check === true);\nif (data.action === 'save') {\n  show = true;\n} else if (data.action === 'submit' && allChecked) {\n  show = true;\n} else {\n  show = false;\n}"
+        }
+    ]
+}

@@ -2,10 +2,12 @@ const jwt = require("jsonwebtoken");
 const LdapClient = require("ldapjs-client");
 const { CmisSession } = require("cmis");
 
+
 const JWT_SECRET = process.env.JWT_SECRET;
 const LDAP_URL = process.env.LDAP_API;
 const CMIS_SECRET_URL = process.env.CMIS_SECRET_URL;
 const LDAP_BASE = process.env.LDAP_BASE;
+
 // Helper function to search for user DN recursively
 async function findUserDN(client, username, baseDN = `ou=users,${LDAP_BASE}`) {
   const searchOptions = {

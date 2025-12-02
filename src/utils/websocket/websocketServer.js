@@ -11,7 +11,7 @@ function initializeWebSocketServer(server) {
   });
 
   wss.on('connection', (ws, request) => {
-    // console.log('📡 New WebSocket connection established');
+    console.log('📡 New WebSocket connection established');
     
     // Handle client identification
     ws.on('message', (message) => {
@@ -26,7 +26,7 @@ function initializeWebSocketServer(server) {
             connectionTime: new Date().toISOString()
           });
           
-          // console.log(`👤 Client identified: ${data.userId}, Groups: ${JSON.stringify(data.groups)}`);
+          console.log(`👤 Client identified: ${data.userId}, Groups: ${JSON.stringify(data.groups)}`);
           
           // Send confirmation
           ws.send(JSON.stringify({
@@ -92,7 +92,7 @@ function broadcastTaskEvent(eventData) {
     }
   });
 
-  // console.log(`📡 Broadcasted task event: ${eventData.type} - Sent: ${sentCount}, Failed: ${failedCount}`);
+  console.log(`📡 Broadcasted task event: ${eventData.type} - Sent: ${sentCount}, Failed: ${failedCount}`);
 }
 
 // Get connected clients info

@@ -67,7 +67,7 @@ async function removeStock(stockpk, quantity, notes = "") {
   }
 }
 
-/* 
+/*
  * COUNT STOCK — menghitung ulang stok
  */
 async function countStock(stockpk, quantity, notes = "") {
@@ -108,11 +108,9 @@ async function transferStock(stockpk, quantity, destination, notes = "") {
         },
       ],
       notes,
-      location: destination, // Lokasi tujuan
+      location: destination,
     };
-
     console.log("📦 transfer Stock payload:", JSON.stringify(payload, null, 2));
-
     const res = await inventree.post("/stock/transfer/", payload);
     console.log("✅ transfer Stock response:", res.data);
     return res.data;
@@ -120,7 +118,7 @@ async function transferStock(stockpk, quantity, destination, notes = "") {
     const status = err.response?.status;
     const items = err.response?.data?.items;
     console.error(`❌ transferStock Error: status=${status}, items=`, items);
-    throw { status, items }; // lempar error sederhana
+    throw { status, items };
   }
 }
 
@@ -153,7 +151,10 @@ async function mergeStock(partId, destLocationPk, notes = "") {
       notes,
     };
 
-    console.log("📦 merge Stock payload:", JSON.stringify(mergePayload, null, 2));
+    console.log(
+      "📦 merge Stock payload:",
+      JSON.stringify(mergePayload, null, 2)
+    );
 
     // 4️⃣ Eksekusi merge
     const res = await inventree.post("/stock/merge/", mergePayload);
@@ -194,7 +195,7 @@ async function trackStock(stockPk, search = "") {
 
 async function getDescStock(partId, destLocationPk) {
   try {
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
     const { data: stockItems } = await inventree.get(
       `/stock/?location=${destLocationPk}&part=${partId}&ordering=-updated&limit=1`
@@ -202,7 +203,6 @@ async function getDescStock(partId, destLocationPk) {
 
     const stockPKs = stockItems?.results[0]?.pk || null;
     return stockPKs;
-
   } catch (err) {
     const status = err.response?.status;
     const items = err.response?.data?.items;
@@ -211,6 +211,36 @@ async function getDescStock(partId, destLocationPk) {
   }
 }
 
+async function createStockTransferEqual(partId, quantity, sourceId) {
+  try {
+    const { data: srcStock } = await inventree.get(`/stock/${sourceId}/`);
+    const locationId = srcStock.location;
+    const payload = {
+      part: partId,
+      quantity,
+      location: locationId,
+    };
+    console.log(
+      "📦 createStockTransferEqual Payload:",
+      JSON.stringify(payload, null, 2)
+    );
+    await inventree.post("/stock/", payload);
+    const { data: stockItems } = await inventree.get(
+      `/stock/?location=${locationId}&part=${partId}&ordering=-updated&limit=1`
+    );
+    const stockPK = stockItems?.results?.[0]?.pk || null;
+    console.log("📌 New Primary Stock PK:", stockPK);
+    return stockPK;
+  } catch (err) {
+    const status = err.response?.status;
+    const items = err.response?.data?.items;
+    console.error(
+      `❌ createStockTransferEqual Error: status=${status}, items=`,
+      items
+    );  
+    throw { status, items };
+  }
+}
 
 module.exports = {
   addStock,
@@ -219,5 +249,6 @@ module.exports = {
   transferStock,
   mergeStock,
   trackStock,
-  getDescStock
+  getDescStock,
+  createStockTransferEqual,
 };
