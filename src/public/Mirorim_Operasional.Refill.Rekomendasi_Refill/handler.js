@@ -46,7 +46,7 @@ const eventHandlers = {
               const dataQuery = {
                 graph: {
                   method: "mutate",
-                  endpoint: "http://localhost:9000/v1/graphql",
+                  endpoint: "http://192.168.1.85:9000/v1/graphql",
                   gqlQuery: "",
                   variables: {},
                 },
@@ -108,7 +108,9 @@ const eventHandlers = {
                 gqlQuery: `mutation MyMutation($proc_inst_id: String!, $task_def_key: String!) { update_mo_refill(where: { proc_inst_id: { _eq: $proc_inst_id } }, _set: { status: $task_def_key }) { affected_rows } }`,
                 variables: {
                   proc_inst_id: item.proc_inst_id,
-                  task_def_key: item.rekomendasi ? "Terima_Rekomendasi_Refill" : "Rejected_Rekomendasi_Refill"
+                  task_def_key: item.rekomendasi
+                    ? "Terima_Rekomendasi_Refill"
+                    : "Rejected_Rekomendasi_Refill",
                 },
               },
             };
