@@ -638,9 +638,38 @@ import("camunda-external-task-client-js").then(
           ordersData.length === 0 ||
           !ordersData[0].graph.mo_order_shop.length
         ) {
-          throw new Error(
-            "Data pesanan tidak ditemukan untuk proc_inst_id: " + proc_inst_id
-          );
+          const dataQuery = {
+            graph: {
+              method: "query",
+              endpoint: GRAPHQL_API,
+              gqlQuery: `query MyQuery($proc_inst_id: [String!]) {
+                      mo_order_shop(where: {proc_inst_id: {_in: $proc_inst_id}}) {
+                        proc_inst_id
+                        invoice
+                        sku_toko
+                        quantity_order
+                        picked_status
+                      }
+                    }`,
+              variables: {
+                proc_inst_id: [proc_inst_id],
+              },
+            },
+            query: [],
+          };
+
+          const responseQuery = await configureQuery(fastify, dataQuery);
+          const ordersDataNotPicking = responseQuery.data;
+          if (
+            !ordersDataNotPicking ||
+            ordersDataNotPicking.length === 0 ||
+            !ordersDataNotPicking[0].graph.mo_order_shop.length
+          ){
+            throw new Error(
+              "Data pesanan tidak ditemukan untuk proc_inst_id: " + proc_inst_id
+            );
+          }
+          await taskService.complete(task);
         }
 
         const orders = ordersData[0].graph.mo_order_shop;
@@ -754,13 +783,12 @@ import("camunda-external-task-client-js").then(
             method: "query",
             endpoint: GRAPHQL_API,
             gqlQuery: `query MyQuery($proc_inst_id: [String!]) {
-  mo_dropship(where: {proc_inst_id: {_in: $proc_inst_id}}) {
-    proc_inst_id
-    invoice
-    sku
-  }
-}
-`,
+                mo_dropship(where: {proc_inst_id: {_in: $proc_inst_id}}) {
+                  proc_inst_id
+                  invoice
+                  sku
+                }
+              }`,
             variables: {
               proc_inst_id: [proc_inst_id],
             },
