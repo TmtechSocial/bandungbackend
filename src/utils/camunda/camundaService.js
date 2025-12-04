@@ -5165,12 +5165,13 @@ import("camunda-external-task-client-js").then(
           const initiatorId = task.variables.get("initiatorId");
 
           // Daftar ID khusus yang hanya tercatat absen tanpa menghilangkan group
-          const specialUserIds = [77001, 70001, 98001, 69001, 82001, "00001"];
-          const isSpecialUser = specialUserIds.includes(Number(initiatorId));
+          const checkFixMember = await axios.get(`${process.env.LDAP_API_MANAGE}/users/${initiatorId}`);
+          const rawFix = checkFixMember.data?.data?.fixMemberUid;
+          const fixMember = rawFix === "true";
 
           // Step 1: POST ke LDAP API untuk force-remove attendance (hanya jika bukan special user)
           let forceRemoveResult = null;
-          if (!isSpecialUser) {
+          if (!fixMember) {
             try {
               const forceRemoveResponse = await axios.post(
                 `${process.env.LDAP_API_MANAGE}/attendance/force-remove`,
