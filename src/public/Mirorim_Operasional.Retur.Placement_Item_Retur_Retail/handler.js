@@ -19,29 +19,28 @@ const eventHandlers = {
 
       try {
         // --- Kirim ke Camunda ---
-        // const dataCamunda = {
-        //   type: "complete",
-        //   endpoint: `/engine-rest/task/{taskId}/complete`,
-        //   instance: instanceId,
-        //   variables: {
-        //     variables: {
-        //       adjustmentRetail: {
-        //         value: Boolean(item.adjustmentRetail),
-        //         type: "Boolean",
-        //       },
-        //     },
-        //   },
-        // };
+        const dataCamunda = {
+          type: "complete",
+          endpoint: `/engine-rest/task/{taskId}/complete`,
+          instance: instanceId,
+          variables: {
+            variables: {
+              adjustmentRetail: {
+                value: Boolean(item.adjustmentRetail),
+                type: "Boolean",
+              },
+            },
+          },
+        };
 
-        // const responseCamunda = await camundaConfig(
-        //   dataCamunda,
-        //   instanceId,
-        //   process
-        // );
+        const responseCamunda = await camundaConfig(
+          dataCamunda,
+          instanceId,
+          process
+        );
 
-        // // --- Jika Camunda sukses ---
-        // if ([200, 204].includes(responseCamunda.status)) {
-        if (item.proc_inst_id) {
+        // --- Jika Camunda sukses ---
+        if ([200, 204].includes(responseCamunda.status)) {
           const inventree = axios.create({
             baseURL: `${SERVER_INVENTREE}/api`,
             headers: {
@@ -154,7 +153,7 @@ const eventHandlers = {
 
           results.push({
             message: "✅ Event processed successfully",
-            // camunda: responseCamunda.data,
+            camunda: responseCamunda.data,
             database: responseQuery.map((r) => r.data),
           });
         } else {
