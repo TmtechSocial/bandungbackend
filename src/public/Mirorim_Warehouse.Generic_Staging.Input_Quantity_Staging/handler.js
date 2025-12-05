@@ -17,6 +17,7 @@ const eventHandlers = {
         // ✅ Tentukan payload Camunda secara dinamis
         let camundaVariables = {
           quantity_input: { value: item.quantity_input, type: "Integer" },
+          evidence_delivery_staging: { value: item.evidence[0] || "", type: "String" },
         };
 
         if (item.tipe_wip === "PREPARE") {

@@ -25,6 +25,7 @@ const eventHandlers = {
             variables: {
               part_id: { value: item.part_id, type: "Integer" },
               unique_trx: { value: item.unique_trx, type: "String" },
+              evidence_delivery_staging: { value: item.evidence[0] || "", type: "String" },
             },
             businessKey: `${item.part_id}:${item.unique_trx}:${item.created_at}`,
           },

@@ -37,6 +37,7 @@ const eventHandlers = {
           instance: item.proc_inst_id,
           variables: {
             variables: {
+              evidence_delivery_staging: { value: item.evidence[0] || "", type: "String" },
               hitung_ulang: { value: item.decisionAdjusment, type: "boolean" },
               quantity_input: {
                 value: item.decisionAdjusment
@@ -163,21 +164,21 @@ const eventHandlers = {
                   // Jika selisih < 0 (pengurangan)
                   const stockTrackAdd = await trackStock(primaryStock, notesAdd);
                   if (stockTrackAdd.count === 0) {
-                  await addStock(primaryStock, Math.abs(selisih), notesAdd);
+                    await addStock(primaryStock, Math.abs(selisih), notesAdd);
                   } else {
                     console.log("Stock sudah pernah Add");
                   }
 
                   const stockTrackRemove = await trackStock(stockpk, notesRemove);
                   if (stockTrackRemove.count === 0) {
-                  await removeStock(stockpk, Math.abs(selisih), notesRemove);
+                    await removeStock(stockpk, Math.abs(selisih), notesRemove);
                   } else {
                     console.log("Stock sudah pernah Remove");
                   }
                 }
               }
             }
-            
+
 
             dataQuery = {
               graph: {
