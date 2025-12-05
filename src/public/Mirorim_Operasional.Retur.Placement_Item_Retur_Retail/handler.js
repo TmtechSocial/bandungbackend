@@ -19,24 +19,29 @@ const eventHandlers = {
 
       try {
         // --- Kirim ke Camunda ---
-        const dataCamunda = {
-          type: "complete",
-          endpoint: `/engine-rest/task/{taskId}/complete`,
-          instance: instanceId,
-          variables: {
-            variables: {
-              adjustmentRetail: {
-                value: Boolean(item.adjustmentRetail),
-                type: "Boolean",
-              },
-            },
-          },
-        };
+        // const dataCamunda = {
+        //   type: "complete",
+        //   endpoint: `/engine-rest/task/{taskId}/complete`,
+        //   instance: instanceId,
+        //   variables: {
+        //     variables: {
+        //       adjustmentRetail: {
+        //         value: Boolean(item.adjustmentRetail),
+        //         type: "Boolean",
+        //       },
+        //     },
+        //   },
+        // };
 
-        const responseCamunda = await camundaConfig(dataCamunda, instanceId, process);
+        // const responseCamunda = await camundaConfig(
+        //   dataCamunda,
+        //   instanceId,
+        //   process
+        // );
 
-        // --- Jika Camunda sukses ---
-        if ([200, 204].includes(responseCamunda.status)) {
+        // // --- Jika Camunda sukses ---
+        // if ([200, 204].includes(responseCamunda.status)) {
+        if (item.proc_inst_id) {
           const inventree = axios.create({
             baseURL: `${SERVER_INVENTREE}/api`,
             headers: {
@@ -54,9 +59,13 @@ const eventHandlers = {
               // --- Jika tidak ada adjustmentRetail, maka lakukan transfer stok ---
               if (!item.adjustmentRetail) {
                 const today = new Date();
-const batchDate = `${String(today.getDate()).padStart(2, "0")}-${String(
-  today.getMonth() + 1
-).padStart(2, "0")}-${today.getFullYear()}`;
+                const batchDate = `${String(today.getDate()).padStart(
+                  2,
+                  "0"
+                )}-${String(today.getMonth() + 1).padStart(
+                  2,
+                  "0"
+                )}-${today.getFullYear()}`;
 
                 const transferPayload = {
                   items: [
@@ -83,7 +92,9 @@ const batchDate = `${String(today.getDate()).padStart(2, "0")}-${String(
                 );
 
                 const stockPKs =
-                  stockItems?.results?.map((stock) => stock.pk).filter(Boolean) || [];
+                  stockItems?.results
+                    ?.map((stock) => stock.pk)
+                    .filter(Boolean) || [];
 
                 if (stockPKs.length > 0) {
                   const mergePayload = {
@@ -92,7 +103,10 @@ const batchDate = `${String(today.getDate()).padStart(2, "0")}-${String(
                     notes: `Merge stok Retail Retur | Proc inst ID: ${item.proc_inst_id}`,
                   };
 
-                  console.log("📦 mergePayload:", JSON.stringify(mergePayload, null, 2));
+                  console.log(
+                    "📦 mergePayload:",
+                    JSON.stringify(mergePayload, null, 2)
+                  );
 
                   await inventree.post(`/stock/merge/`, mergePayload);
                 } else {
@@ -100,7 +114,6 @@ const batchDate = `${String(today.getDate()).padStart(2, "0")}-${String(
                     `⚠️ Tidak ada stok ditemukan untuk merge di lokasi ${product.location_id} part ${product.part_pk}`
                   );
                 }
-
               }
 
               // --- Tambahkan GraphQL Mutation ---
@@ -109,10 +122,10 @@ const batchDate = `${String(today.getDate()).padStart(2, "0")}-${String(
                   method: "mutate",
                   endpoint: GRAPHQL_API,
                   gqlQuery: `
-                    mutation UpdateQuantity($id: Int!, $quantity: Int!) {
+                    mutation UpdateQuantity($id: Int!, $quantity: Int!, $evidence: String!) {
                       update_mo_retur_placement(
-                        where: { id: { _eq: $id } },
-                        _set: { quantity_placement: $quantity }
+                        where: { id: { _eq: $id } }, 
+                        _set: { quantity_placement: $quantity, evidence: $evidence }
                       ) {
                         affected_rows
                       }
@@ -121,6 +134,7 @@ const batchDate = `${String(today.getDate()).padStart(2, "0")}-${String(
                   variables: {
                     id: Number(product.id),
                     quantity: Number(product.quantity_placement),
+                    evidence: item.evidence[0] || "",
                   },
                 },
                 query: [],
@@ -140,14 +154,17 @@ const batchDate = `${String(today.getDate()).padStart(2, "0")}-${String(
 
           results.push({
             message: "✅ Event processed successfully",
-            camunda: responseCamunda.data,
+            // camunda: responseCamunda.data,
             database: responseQuery.map((r) => r.data),
           });
         } else {
           console.warn(`⚠️ Camunda response status: ${responseCamunda.status}`);
         }
       } catch (error) {
-        console.error(`❌ Error executing handler for event: ${eventKey}`, error);
+        console.error(
+          `❌ Error executing handler for event: ${eventKey}`,
+          error
+        );
         results.push({ error: error.message, instanceId });
       }
     }
