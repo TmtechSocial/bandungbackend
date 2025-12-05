@@ -1,7 +1,10 @@
 const { Source } = require("graphql");
 const { configureQuery } = require("../../controller/controllerConfig");
 const camundaConfig = require("../../utils/camunda/camundaConfig");
-const { transferStock, getDescStock } = require("../../utils/inventree/inventreeActions");
+const {
+  transferStock,
+  getDescStock,
+} = require("../../utils/inventree/inventreeActions");
 const fastify = require("fastify");
 const axios = require("axios");
 const GRAPHQL_API = process.env.GRAPHQL_API;
@@ -27,7 +30,12 @@ const eventHandlers = {
 
           console.log("source_id:", stockPk);
 
-          const stockTransfer = await transferStock(stockPk, quantity, locationPk, notesTransfer);
+          const stockTransfer = await transferStock(
+            stockPk,
+            quantity,
+            locationPk,
+            notesTransfer
+          );
           stockGetDesc = await getDescStock(partPk, locationPk);
 
           console.log("stockGetDesc:", stockGetDesc);
@@ -39,20 +47,28 @@ const eventHandlers = {
             instance: instanceId,
             variables: {
               variables: {
-                product_name: { value: item.product_name || null, type: "String" },
-                coordinator: { value: "InventoryPrepareCoordinator", type: "String" },
+                product_name: {
+                  value: item.product_name || null,
+                  type: "String",
+                },
+                coordinator: {
+                  value: "InventoryPrepareCoordinator",
+                  type: "String",
+                },
                 part_id: { value: item.part_id, type: "Integer" },
                 source_stock: { value: stockGetDesc, type: "Integer" },
                 primary_stock: { value: item.source_id, type: "Integer" },
                 id: { value: item.id, type: "Integer" },
-                quantity_staging: { value: item.quantity_staging, type: "Integer" },
+                quantity_staging: {
+                  value: item.quantity_staging,
+                  type: "Integer",
+                },
                 WIPLocation: { value: 1000006, type: "Integer" },
                 table_reference: { value: "mutasi_request", type: "String" },
                 printUlang: { value: false, type: "Boolean" },
               },
             },
           };
-
         } else {
           // Payload Camunda untuk print ulang
           dataCamunda = {
@@ -61,14 +77,18 @@ const eventHandlers = {
             instance: instanceId,
             variables: {
               variables: {
-                printUlang: { value: true, type: "Boolean" }
+                printUlang: { value: true, type: "Boolean" },
               },
             },
           };
         }
 
         // Kirim ke Camunda
-        const responseCamunda = await camundaConfig(dataCamunda, instanceId, process);
+        const responseCamunda = await camundaConfig(
+          dataCamunda,
+          instanceId,
+          process
+        );
         console.log("responseCamunda", responseCamunda);
 
         // Jika sukses, lakukan update ke Hasura (kecuali mode printUlang)
@@ -78,19 +98,19 @@ const eventHandlers = {
               console.log("🖨️ Mode print ulang, skip update Hasura.");
               continue;
             }
-          
-            console.log("stockGetDesc:", stockGetDesc);  
+
+            console.log("stockGetDesc:", stockGetDesc);
 
             const dataQuery = {
               graph: {
                 method: "mutate",
                 endpoint: GRAPHQL_API,
                 gqlQuery: `
-                  mutation UpdateMutasi($request_id: Int!, $source_id: String!, $stock_id: String!, $user: String!, $date: timestamp!, $quantity_pick: Int!, $quantity_fisik: Int!, $quantity_data: Int!, $proc_inst_id: String!, $status: String!) {
+                  mutation UpdateMutasi($request_id: Int!, $source_id: String!, $stock_id: String!, $user: String!, $date: timestamp!, $quantity_pick: Int!, $quantity_fisik: Int!, $quantity_data: Int!, $proc_inst_id: String!, $status: String!, $evidence_picking: String!) {
   updateDetails: update_mutasi_request_details(where: {request_id: {_eq: $request_id}, source_id: {_eq: $source_id}, type: {_eq: "source"}}, _set: {updated_by: $user, updated_at: $date, quantity: $quantity_pick, quantity_physical: $quantity_fisik, quantity_data: $quantity_data, source_id: $stock_id}) {
     affected_rows
   }
-  updateRequest: update_mutasi_request(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {quantity: $quantity_pick, status: $status}) {
+  updateRequest: update_mutasi_request(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {quantity: $quantity_pick, status: $status, evidence_picking: $evidence_picking}) {
     affected_rows
   }
 }
@@ -106,13 +126,16 @@ const eventHandlers = {
                   quantity_fisik: product.quantity_fisik || 0,
                   quantity_data: item.quantity_data || 0,
                   status: "Completed",
+                  evidence_picking: item.evidence[0] || "",
                 },
               },
               query: [],
             };
 
             const responseQuery = await configureQuery(fastify, dataQuery);
-            console.log(`Updated mutasi_request_details request_id ${product.request_id}`);
+            console.log(
+              `Updated mutasi_request_details request_id ${product.request_id}`
+            );
             console.log(responseQuery.data);
           }
 
@@ -121,7 +144,6 @@ const eventHandlers = {
             camunda: responseCamunda.data,
           });
         }
-
       } catch (error) {
         console.error(`Error executing handler for event: ${eventKey}`, error);
         throw error;

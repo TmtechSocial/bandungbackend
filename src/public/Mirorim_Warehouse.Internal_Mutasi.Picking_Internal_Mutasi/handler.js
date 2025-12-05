@@ -1,6 +1,9 @@
 const { configureQuery } = require("../../controller/controllerConfig");
 const camundaConfig = require("../../utils/camunda/camundaConfig");
-const { transferStock, getDescStock } = require("../../utils/inventree/inventreeActions");
+const {
+  transferStock,
+  getDescStock,
+} = require("../../utils/inventree/inventreeActions");
 const axios = require("axios");
 
 const GRAPHQL_API = process.env.GRAPHQL_API;
@@ -19,26 +22,26 @@ const eventHandlers = {
         let stockGetDesc = null;
 
         if (!item.printUlang) {
-        try {
-          const destinationVar = await axios.get(
-            `${CAMUNDA_API}engine-rest/process-instance/${item.proc_inst_id}/variables/destination_type`
-          );
-          destinationType = destinationVar?.data?.value || null;
-        } catch (err) {
-          console.warn("⚠️ Tidak bisa ambil destination_type:", err.message);
-        }
+          try {
+            const destinationVar = await axios.get(
+              `${CAMUNDA_API}engine-rest/process-instance/${item.proc_inst_id}/variables/destination_type`
+            );
+            destinationType = destinationVar?.data?.value || null;
+          } catch (err) {
+            console.warn("⚠️ Tidak bisa ambil destination_type:", err.message);
+          }
 
-        console.log("destination_type:", destinationType);
+          console.log("destination_type:", destinationType);
 
-        // 🔹 Tentukan WIPDestination
-        let WIPDestination = null;
-        if (destinationType === "Wholesale") {
-          WIPDestination = 1000002;
-        } else if (destinationType === "Retail") {
-          WIPDestination = 1000003;
-        }
+          // 🔹 Tentukan WIPDestination
+          let WIPDestination = null;
+          if (destinationType === "Wholesale") {
+            WIPDestination = 1000002;
+          } else if (destinationType === "Retail") {
+            WIPDestination = 1000003;
+          }
 
-        console.log("WIPDestination:", WIPDestination);
+          console.log("WIPDestination:", WIPDestination);
 
           const partPk = item.part_id;
           const locationPk = 6225;
@@ -49,45 +52,66 @@ const eventHandlers = {
 
           console.log("source_id:", stockPk);
 
-          const stockTransfer = await transferStock(stockPk, quantity, locationPk, notesTransfer);
+          const stockTransfer = await transferStock(
+            stockPk,
+            quantity,
+            locationPk,
+            notesTransfer
+          );
           stockGetDesc = await getDescStock(partPk, locationPk);
 
           console.log("stockGetDesc:", stockGetDesc);
 
-        // 🔹 Kirim data ke Camunda
-        dataCamunda = {
-          type: "complete",
-          endpoint: `/engine-rest/task/{taskId}/complete`,
-          instance: item.proc_inst_id,
-          variables: {
+          // 🔹 Kirim data ke Camunda
+          dataCamunda = {
+            type: "complete",
+            endpoint: `/engine-rest/task/{taskId}/complete`,
+            instance: item.proc_inst_id,
             variables: {
-              product_name: { value: item.product_name || null, type: "String" },
-              part_id: { value: item.part_id || null, type: "Integer" },
-              id: { value: item.id || null, type: "Integer" },
-              source_stock: { value: stockGetDesc, type: "Integer" },
-              primary_stock: { value: item.source_id, type: "Integer" },
-              quantity_staging: { value: item.quantity_staging || 0, type: "Integer" },
-              WIPLocation: { value: WIPDestination, type: "Integer" },
-              table_reference: { value: "mutasi_request", type: "String" },
-              printUlang: { value: item.printUlang || false, type: "Boolean" },
+              variables: {
+                product_name: {
+                  value: item.product_name || null,
+                  type: "String",
+                },
+                part_id: { value: item.part_id || null, type: "Integer" },
+                id: { value: item.id || null, type: "Integer" },
+                source_stock: { value: stockGetDesc, type: "Integer" },
+                primary_stock: { value: item.source_id, type: "Integer" },
+                quantity_staging: {
+                  value: item.quantity_staging || 0,
+                  type: "Integer",
+                },
+                WIPLocation: { value: WIPDestination, type: "Integer" },
+                table_reference: { value: "mutasi_request", type: "String" },
+                printUlang: {
+                  value: item.printUlang || false,
+                  type: "Boolean",
+                },
+              },
             },
-          },
-        };
-      } else{
-        console.log("🖨️ Mode print ulang aktif, update camunda .");
-        dataCamunda = {
-          type: "complete",
-          endpoint: `/engine-rest/task/{taskId}/complete`,
-          instance: item.proc_inst_id,
-          variables: {
+          };
+        } else {
+          console.log("🖨️ Mode print ulang aktif, update camunda .");
+          dataCamunda = {
+            type: "complete",
+            endpoint: `/engine-rest/task/{taskId}/complete`,
+            instance: item.proc_inst_id,
             variables: {
-              printUlang: { value: item.printUlang || false, type: "Boolean" },
+              variables: {
+                printUlang: {
+                  value: item.printUlang || false,
+                  type: "Boolean",
+                },
+              },
             },
-          },
-        };
-      }
+          };
+        }
 
-        const responseCamunda = await camundaConfig(dataCamunda, instanceId, process);
+        const responseCamunda = await camundaConfig(
+          dataCamunda,
+          instanceId,
+          process
+        );
         console.log("responseCamunda", responseCamunda.status);
 
         if (responseCamunda.status === 200 || responseCamunda.status === 204) {
@@ -115,6 +139,7 @@ const eventHandlers = {
                       $quantity_fisik: Int!
                       $quantity_data: Int!
                       $proc_inst_id: String!
+                      $evidence_picking: String!
                     ) {
                       updateDetails: update_mutasi_request_details(
                         where: { 
@@ -135,7 +160,8 @@ const eventHandlers = {
                       }
                       updateRequest: update_mutasi_request(
                         where: { proc_inst_id: { _eq: $proc_inst_id } },
-                        _set: { quantity: $quantity_pick }
+                        _set: { quantity: $quantity_pick, 
+                          evidence_picking: $evidence_picking }
                       ) {
                         affected_rows
                       }
@@ -151,6 +177,7 @@ const eventHandlers = {
                     quantity_pick: product.quantity_pick || 0,
                     quantity_fisik: product.quantity_fisik || 0,
                     quantity_data: item.quantity_data || 0,
+                    evidence_picking: item.evidence[0] || "",
                   },
                 },
                 query: [],
@@ -170,7 +197,10 @@ const eventHandlers = {
           });
         }
       } catch (error) {
-        console.error(`❌ Error executing handler for event: ${eventKey}`, error.message);
+        console.error(
+          `❌ Error executing handler for event: ${eventKey}`,
+          error.message
+        );
         throw error;
       }
     }
