@@ -1,14 +1,37 @@
-const Fastify = require("fastify");
-const LdapClient = require("ldapjs-client");
+const config = require('../../config');
+const logger = require('../logger');
 
-// Mengambil URL LDAP dari environment variable
-const LDAP_URL = process.env.LDAP_API;
-const LDAP_BASE = process.env.LDAP_BASE;
-const client = new LdapClient({ url: LDAP_URL });
+// Lazy LDAP client initialization
+let client = null;
+function getLdapClient() {
+  if (client) return client;
+
+  const ldapConfig = config.get('api.ldap') || {};
+  const LDAP_URL = ldapConfig.url || process.env.LDAP_API;
+  const LDAP_BASE = ldapConfig.base || process.env.LDAP_BASE;
+
+  if (!LDAP_URL) {
+    throw new Error('LDAP is not configured (LDAP_API missing)');
+  }
+
+  const LdapClient = require('ldapjs-client');
+  client = new LdapClient({ url: LDAP_URL });
+  client.__LDAP_BASE = LDAP_BASE;
+  return client;
+}
 
 // Fungsi untuk mengambil uid, cn, sn, dan group dari LDAP
 async function getUsers(fastify, { uid, cn, sn, group } = {}) {
   try {
+    // Ensure LDAP client
+    try {
+      client = getLdapClient();
+    } catch (initErr) {
+      logger.warn('LDAP client not initialized: ' + initErr.message, { component: 'ldap' });
+      return { status: 503, message: 'LDAP not configured' };
+    }
+
+    const LDAP_BASE = client.__LDAP_BASE || process.env.LDAP_BASE;
     // Membentuk filter berdasarkan parameter yang diberikan atau mengambil semua jika kosong
     let filter = "(&(objectClass=inetOrgPerson)";
     if (uid) filter += `(uid=${uid})`;
@@ -51,11 +74,8 @@ async function getUsers(fastify, { uid, cn, sn, group } = {}) {
       groupMembersMap[groupName] = members;
     }
 
-    //console.log("groupMembersMap", groupMembersMap);
-
     // Menambahkan grup ke setiap pengguna berdasarkan pencocokan dengan memberUid
     users.forEach(user => {
-      console.log("user", user);
       // Format pencocokan uid pengguna dengan anggota grup
       user.groups = Object.keys(groupMembersMap).filter(groupName =>
         groupMembersMap[groupName].includes(`uid=${user.uid}`)
@@ -64,8 +84,8 @@ async function getUsers(fastify, { uid, cn, sn, group } = {}) {
 
     return users;
   } catch (error) {
-    fastify.log.error("Error during LDAP search:", error);
-    return { status: 500, message: "Error fetching users" };
+    logger.error('Error during LDAP search', { component: 'ldap', error: error.stack || error.message });
+    return { status: 500, message: 'Error fetching users' };
   }
 }
 

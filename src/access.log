@@ -1,5 +1,0 @@
-Timestamp: 2024-12-18 23:35:05 | Method: GET | URL: / | IP Address: 127.0.0.1 | User-Agent: PostmanRuntime/7.43.0
-Timestamp: 2024-12-18 23:44:22 | Method: GET | URL: /configure | IP Address: 127.0.0.1 | User-Agent: PostmanRuntime/7.43.0
-Timestamp: 2024-12-18 23:46:28 | Method: GET | URL: /configure | IP Address: 127.0.0.1 | User-Agent: PostmanRuntime/7.43.0
-Timestamp: 2024-12-18 23:46:39 | Method: GET | URL: /configure?process | IP Address: 127.0.0.1 | User-Agent: PostmanRuntime/7.43.0
-Timestamp: 2024-12-18 23:46:50 | Method: GET | URL: /configure?process=IT_Service.Service_Request | IP Address: 127.0.0.1 | User-Agent: PostmanRuntime/7.43.0

@@ -4,8 +4,23 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "start:pm2": "pm2 start config/ecosystem.config.js --env production",
+    "stop:pm2": "pm2 stop ecosystem.config.js",
+    "restart:pm2": "pm2 restart ecosystem.config.js",
+    "logs:pm2": "pm2 logs",
+    "monit:pm2": "pm2 monit",
+    "docker:build": "docker build -t bandung-backend:latest -f docker/Dockerfile .",
+    "docker:run": "docker-compose -f docker/docker-compose.yml up -d",
+    "docker:stop": "docker-compose -f docker/docker-compose.yml down",
+    "health": "curl http://localhost:8010/health || echo 'Health check failed'",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon server.js"
+    "lint": "echo \"No linter configured\"",
+    "audit": "npm audit",
+    "clean": "rm -rf node_modules package-lock.json && npm install",
+    "setup": "npm install && cp .env.example .env && echo 'Please configure .env file'",
+    "validate": "node -e \"require('./src/config'); console.log('Configuration valid');\""
   },
   "keywords": [],
   "author": "",
@@ -34,7 +49,10 @@
     "node-cache": "^5.1.2",
     "node-cron": "^4.2.1",
     "pg": "^8.13.1",
+    "prom-client": "^15.1.3",
     "qrcode": "^1.5.4",
+    "winston": "^3.18.3",
+    "winston-daily-rotate-file": "^5.0.0",
     "ws": "^8.18.3"
   },
   "devDependencies": {

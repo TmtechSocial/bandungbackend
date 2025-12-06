@@ -1,20 +1,41 @@
-const LDAP_URL = process.env.LDAP_API;
-const Fastify = require("fastify");
-const LdapClient = require("ldapjs-client");
+const config = require('../../config');
+const logger = require('../logger');
 
-// Membuat client LDAP dengan URL dari environment variable
-const client = new LdapClient({ url: LDAP_URL });
+// Lazy LDAP client initialization to avoid throwing during startup when envs missing
+let client = null;
+function getLdapClient() {
+  if (client) return client;
+
+  const ldapConfig = config.get('api.ldap') || {};
+  const LDAP_URL = ldapConfig.url || process.env.LDAP_API;
+
+  if (!LDAP_URL) {
+    throw new Error('LDAP is not configured (LDAP_API missing)');
+  }
+
+  const LdapClient = require('ldapjs-client');
+  client = new LdapClient({ url: LDAP_URL });
+  return client;
+}
 
 // Fungsi untuk mendapatkan employee berdasarkan manager
 async function getMember(fastify, session) {
   try {
+    // Initialize client lazily (may throw if LDAP not configured)
+    try {
+      client = getLdapClient();
+    } catch (initErr) {
+      logger.warn('LDAP client not initialized: ' + initErr.message, { component: 'ldap' });
+      return { status: 503, message: 'LDAP not configured' };
+    }
+
     // Menggunakan baseDn dari session untuk mencari informasi manager
     const managerSearch = await client.search(
       session.baseDn, // Menggunakan baseDn dari session
       {
-        scope: "sub",
-        filter: "(objectClass=inetOrgPerson)", // Filter untuk mencari manager
-        attributes: ["cn", "sn", "mail", "manager"], // Atribut manager untuk dicari
+        scope: 'sub',
+        filter: '(objectClass=inetOrgPerson)', // Filter untuk mencari manager
+        attributes: ['cn', 'sn', 'mail', 'manager'], // Atribut manager untuk dicari
       }
     );
 

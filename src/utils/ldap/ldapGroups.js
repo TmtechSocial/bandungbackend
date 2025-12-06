@@ -1,10 +1,24 @@
-const Fastify = require("fastify");
-const LdapClient = require("ldapjs-client");
+const config = require('../../config');
+const logger = require('../logger');
 
-// Mengambil URL LDAP dari environment variable
-const LDAP_URL = process.env.LDAP_API;
-const LDAP_BASE = process.env.LDAP_BASE;
-const client = new LdapClient({ url: LDAP_URL });
+// Lazy LDAP client initialization
+let client = null;
+function getLdapClient() {
+  if (client) return client;
+
+  const ldapConfig = config.get('api.ldap') || {};
+  const LDAP_URL = ldapConfig.url || process.env.LDAP_API;
+  const LDAP_BASE = ldapConfig.base || process.env.LDAP_BASE;
+
+  if (!LDAP_URL) {
+    throw new Error('LDAP is not configured (LDAP_API missing)');
+  }
+
+  const LdapClient = require('ldapjs-client');
+  client = new LdapClient({ url: LDAP_URL });
+  client.__LDAP_BASE = LDAP_BASE; // attach base for later use
+  return client;
+}
 
 // Fungsi untuk mengambil semua user dalam grup tertentu
 async function getUsersByGroup(fastify, groupNames) {
@@ -12,6 +26,16 @@ async function getUsersByGroup(fastify, groupNames) {
     if (!groupNames) {
       return { status: 400, message: "Group name is required" };
     }
+
+    // Ensure LDAP client is initialized
+    try {
+      client = getLdapClient();
+    } catch (initErr) {
+      logger.warn('LDAP client not initialized: ' + initErr.message, { component: 'ldap' });
+      return { status: 503, message: 'LDAP not configured' };
+    }
+
+    const LDAP_BASE = client.__LDAP_BASE || process.env.LDAP_BASE;
 
     // Convert single group name to array for consistent processing
     const groups = Array.isArray(groupNames) ? groupNames : [groupNames];
@@ -69,21 +93,31 @@ async function getUsersByGroup(fastify, groupNames) {
     }
 
     if (users.length === 0) {
-      console.warn(`No users found in groups: ${groups.join(', ')}`);
+      logger.warn(`No users found in groups: ${groups.join(', ')}`, { component: 'ldap' });
       return [];
     }
 
     return users;
 
   } catch (error) {
-    console.error("Error during LDAP group search:", error);
-    return { status: 500, message: "Error fetching users from groups" };
+    logger.error('Error during LDAP group search', { component: 'ldap', error: error.stack || error.message });
+    return { status: 500, message: 'Error fetching users from groups' };
   }
 }
 
 // Fungsi untuk mendapatkan daftar semua grup yang tersedia
 async function getAllGroups(fastify) {
   try {
+    // Ensure LDAP client is initialized
+    try {
+      client = getLdapClient();
+    } catch (initErr) {
+      logger.warn('LDAP client not initialized: ' + initErr.message, { component: 'ldap' });
+      return { status: 503, message: 'LDAP not configured' };
+    }
+
+    const LDAP_BASE = client.__LDAP_BASE || process.env.LDAP_BASE;
+
     const groupSearch = await client.search(`ou=groups,${LDAP_BASE}`, {
       scope: "sub",
       filter: "(objectClass=posixGroup)",
@@ -105,8 +139,8 @@ async function getAllGroups(fastify) {
     return groups;
 
   } catch (error) {
-    console.error("Error during LDAP groups search:", error);
-    return { status: 500, message: "Error fetching groups" };
+    logger.error('Error during LDAP groups search', { component: 'ldap', error: error.stack || error.message });
+    return { status: 500, message: 'Error fetching groups' };
   }
 }
 
