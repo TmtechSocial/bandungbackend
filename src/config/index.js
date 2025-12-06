@@ -164,6 +164,24 @@ class ConfigManager {
         fcm: {
           enabled: process.env.FCM_ENABLED !== 'false'
         }
+      },
+
+      // RabbitMQ Configuration
+      rabbitmq: {
+        url: process.env.RABBITMQ_URL || 'amqp://localhost:5672',
+        exchangeName: process.env.RABBITMQ_EXCHANGE || 'bandung_backend_exchange',
+        queues: {
+          default: process.env.RABBITMQ_QUEUE_DEFAULT || 'default_queue',
+          notifications: process.env.RABBITMQ_QUEUE_NOTIFICATIONS || 'notifications_queue',
+          processing: process.env.RABBITMQ_QUEUE_PROCESSING || 'processing_queue',
+          deadLetter: process.env.RABBITMQ_QUEUE_DLQ || 'dead_letter_queue'
+        },
+        options: {
+          prefetch: parseInt(process.env.RABBITMQ_PREFETCH) || 10,
+          retryAttempts: parseInt(process.env.RABBITMQ_RETRY_ATTEMPTS) || 3,
+          retryDelay: parseInt(process.env.RABBITMQ_RETRY_DELAY) || 5000,
+          heartbeat: parseInt(process.env.RABBITMQ_HEARTBEAT) || 60
+        }
       }
     };
   }

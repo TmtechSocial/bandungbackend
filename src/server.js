@@ -5,6 +5,7 @@ const { errorHandler } = require('./utils/errorHandler');
 const { gracefulShutdown } = require('./utils/gracefulShutdown');
 const { healthChecker } = require('./utils/healthCheck');
 const { metricsCollector } = require('./utils/metrics');
+const { queueManager } = require('./utils/rabbitmq');
 
 // Initialize Fastify with proper configuration
 const fastify = require("fastify")({ 
@@ -181,6 +182,7 @@ fastify.post("/register-fcm", errorHandler.wrapAsync(async (request, reply) => {
 
 // Register Routes
 fastify.register(loginRoutes);
+fastify.register(require('./routes/queue'), { prefix: '/api' });
 fastify.register(fastifyMultipart, {
   limits: {
     fileSize: config.get('upload.maxSize'),
@@ -239,7 +241,21 @@ const start = async () => {
       logger.info('Stopping health checker');
       healthChecker.stop();
     }, 5);
+
+    // RabbitMQ graceful shutdown is already registered in queueManager.initialize()
     
+    // Initialize RabbitMQ
+    try {
+      await queueManager.initialize();
+      logger.info('RabbitMQ initialized successfully');
+    } catch (error) {
+      if (config.isProduction()) {
+        throw error; // Fail fast in production
+      } else {
+        logger.warn('RabbitMQ initialization failed, continuing in development mode', error);
+      }
+    }
+
     // Start health checker
     healthChecker.start();
     logger.info('Health checker started');

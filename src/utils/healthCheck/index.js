@@ -82,6 +82,15 @@ class HealthChecker {
       critical: false,
       interval: 15000
     });
+
+    // RabbitMQ check
+    this.registerCheck('rabbitmq', {
+      name: 'RabbitMQ Message Broker',
+      check: this.checkRabbitMQ.bind(this),
+      timeout: 10000,
+      critical: false,
+      interval: 60000
+    });
   }
 
   /**
@@ -335,6 +344,46 @@ class HealthChecker {
         } : null
       }
     };
+  }
+
+  /**
+   * Check RabbitMQ connectivity and status
+   */
+  async checkRabbitMQ() {
+    try {
+      const rabbitmqConfig = config.get('rabbitmq');
+      if (!rabbitmqConfig.url) {
+        return {
+          status: 'warning',
+          message: 'RabbitMQ not configured',
+          responseTime: 0
+        };
+      }
+
+      // Import here to avoid circular dependency issues
+      const { queueManager } = require('../rabbitmq');
+      
+      const startTime = Date.now();
+      const healthResult = await queueManager.healthCheck();
+      const responseTime = Date.now() - startTime;
+
+      return {
+        status: healthResult.status === 'healthy' ? 'healthy' : 'unhealthy',
+        message: healthResult.message,
+        responseTime,
+        details: {
+          connection: healthResult.stats?.connection,
+          queues: Object.keys(rabbitmqConfig.queues),
+          exchange: rabbitmqConfig.exchangeName
+        }
+      };
+    } catch (error) {
+      return {
+        status: 'unhealthy',
+        message: `RabbitMQ health check failed: ${error.message}`,
+        error: error.message
+      };
+    }
   }
 
   /**

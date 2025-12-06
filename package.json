@@ -30,6 +30,7 @@
     "@fastify/cors": "^10.0.1",
     "@fastify/multipart": "^9.0.1",
     "@fastify/postgres": "^6.0.1",
+    "amqplib": "^0.10.9",
     "apollo-server-fastify": "^3.13.0",
     "axios": "^1.7.9",
     "bwip-js": "^4.6.0",
@@ -51,6 +52,7 @@
     "pg": "^8.13.1",
     "prom-client": "^15.1.3",
     "qrcode": "^1.5.4",
+    "uuid": "^13.0.0",
     "winston": "^3.18.3",
     "winston-daily-rotate-file": "^5.0.0",
     "ws": "^8.18.3"

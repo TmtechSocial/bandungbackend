@@ -166,6 +166,35 @@ class MetricsCollector {
       labelNames: ['direction', 'type']
     });
 
+    // RabbitMQ metrics
+    this.rabbitmqMessagesPublished = new client.Counter({
+      name: `${this.prefix}rabbitmq_messages_published_total`,
+      help: 'Total number of RabbitMQ messages published',
+      labelNames: ['queue_type', 'status']
+    });
+
+    this.rabbitmqMessagesProcessed = new client.Counter({
+      name: `${this.prefix}rabbitmq_messages_processed_total`,
+      help: 'Total number of RabbitMQ messages processed',
+      labelNames: ['queue_type', 'status']
+    });
+
+    this.rabbitmqConnectionStatus = new client.Gauge({
+      name: `${this.prefix}rabbitmq_connection_status`,
+      help: 'RabbitMQ connection status (1 = connected, 0 = disconnected)'
+    });
+
+    this.rabbitmqActiveChannels = new client.Gauge({
+      name: `${this.prefix}rabbitmq_active_channels`,
+      help: 'Number of active RabbitMQ channels'
+    });
+
+    this.rabbitmqQueueDepth = new client.Gauge({
+      name: `${this.prefix}rabbitmq_queue_depth`,
+      help: 'Number of messages in RabbitMQ queues',
+      labelNames: ['queue_name']
+    });
+
     // Application lifecycle metrics
     this.applicationStartTime = new client.Gauge({
       name: `${this.prefix}application_start_time_seconds`,
@@ -199,6 +228,11 @@ class MetricsCollector {
     this.register.registerMetric(this.memoryUsage);
     this.register.registerMetric(this.websocketConnectionsActive);
     this.register.registerMetric(this.websocketMessagesTotal);
+    this.register.registerMetric(this.rabbitmqMessagesPublished);
+    this.register.registerMetric(this.rabbitmqMessagesProcessed);
+    this.register.registerMetric(this.rabbitmqConnectionStatus);
+    this.register.registerMetric(this.rabbitmqActiveChannels);
+    this.register.registerMetric(this.rabbitmqQueueDepth);
     this.register.registerMetric(this.applicationStartTime);
     this.register.registerMetric(this.applicationInfo);
 
