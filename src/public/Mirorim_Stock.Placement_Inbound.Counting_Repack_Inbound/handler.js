@@ -4,20 +4,28 @@ const fastify = require("fastify");
 const GRAPHQL_API = process.env.GRAPHQL_API;
 
 const eventHandlers = {
-  async onSubmit(data, process, eventKey) {
+  async onSubmit(data, process) {
     const results = [];
 
     for (const item of data) {
       try {
-        const instanceId = item.parent_inst_id || null;
+        const instanceId = item.proc_inst_id || null;
 
-       const dataCamunda = {
+        const totalQuantity = item.quantity_not_ok + item.quantity_ok;
+        console.log("totalQuantity", totalQuantity);
+
+        const evidence = JSON.stringify(item.evidence) ||  [];
+
+        const dataCamunda = {
           type: "complete",
           endpoint: `/engine-rest/task/{taskId}/complete`,
-          instance: item.parent_inst_id,
+          instance: item.proc_inst_id,
           variables: {
             variables: {
-               parent_inst_id: { value: item.parent_inst_id, type: "String" },
+              quantity_ok: { value: item.quantity_ok, type: "Integer" },
+              quantity_not_ok: { value: item.quantity_not_ok, type: "Integer" },
+              total_quantity_qc: { value: totalQuantity, type: "Integer" },
+              evidence_counting_repack_inbound: { value: evidence, type: "String" },
             },
           },
         };
@@ -28,22 +36,23 @@ const eventHandlers = {
           process
         );
         if (responseCamunda.status === 200 || responseCamunda.status === 204) {
-
           const dataQuery = {
             graph: {
               method: "mutate",
               endpoint: GRAPHQL_API,
               gqlQuery: `
-              mutation MyMutation($parent_inst_id: String!, $status_order: String!) {
-  update_mi_order(where: {parent_inst_id: {_eq: $parent_inst_id}}, _set: {status: $status_order}) {
+                  mutation UpdateMiOrder($proc_inst_id: String!, $quantity_ok: Int!, $quantity_not_ok: Int!) {
+  update_mi_products(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {quantity_ok: $quantity_ok, quantity_not_ok: $quantity_not_ok}) {
     affected_rows
   }
 }
+
                 `,
-                variables: {
-                  parent_inst_id: item.parent_inst_id,
-                  status_order: "Order Verified",
-                }
+              variables: {
+                proc_inst_id: item.proc_inst_id,
+                quantity_ok: item.quantity_ok,
+                quantity_not_ok: item.quantity_not_ok,
+              },
             },
             query: [],
           };
@@ -95,3 +104,4 @@ const handle = async (eventData) => {
 };
 
 module.exports = { handle };
+

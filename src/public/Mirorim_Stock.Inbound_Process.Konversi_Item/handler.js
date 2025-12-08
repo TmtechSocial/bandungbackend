@@ -10,13 +10,30 @@ const eventHandlers = {
     for (const item of data) {
       try {
         const instanceId = item.proc_inst_id || null;
+        const oldPartIds = (item.products || []).map(p => p.part_pk);
+console.log("oldPartIds", oldPartIds);
 
+const newPartIds = (item.new_products || []).map(p => p.new_part_pk);
+console.log("newPartIds", newPartIds);
+
+         const partIds = [...oldPartIds, ...newPartIds];
+         console.log("partIds", partIds);
+         
         const dataCamunda = {
           type: "complete",
           endpoint: `/engine-rest/task/{taskId}/complete`,
           instance: item.proc_inst_id,
           variables: {
-            variables: {},
+            variables: {
+              part_ids: {
+        value: JSON.stringify(partIds), // ⬅️ stringify array
+        type: "Object",
+        valueInfo: {
+          objectTypeName: "java.util.ArrayList",
+          serializationDataFormat: "application/json",
+        },
+      },
+            },
           },
         };
 
@@ -40,8 +57,7 @@ const eventHandlers = {
                     $created_at: timestamp!, 
                     $created_by: String!, 
                     $invoice: String!, 
-                    $part: Int!, 
-                    $quantity: Int!, 
+                    $part: Int!,
                     $task_def_key: String!
                   ) {
                     insert_mi_logs(
@@ -49,16 +65,9 @@ const eventHandlers = {
                         created_at: $created_at, 
                         created_by: $created_by, 
                         invoice: $invoice, 
-                        part_pk: $part, 
-                        quantity: $quantity, 
+                        part_pk: $part,
                         task_def_key: $task_def_key
                       }
-                    ) {
-                      affected_rows
-                    }
-                    update_mi_products(
-                      where: {part_pk: {_eq: $part}, invoice: {_eq: $invoice}}, 
-                      _set: {quantity_received: $quantity}
                     ) {
                       affected_rows
                     }
@@ -69,8 +78,7 @@ const eventHandlers = {
                   created_by: item.created_by,
                   task_def_key: "Mirorim_Stock.Inbound_Process.Konversi_Item",
                   invoice: item.invoice,
-                  part: product.part_pk,
-                  quantity: product.quantity_received,
+                  part: product.part_pk
                 },
               },
               query: [],
@@ -95,7 +103,8 @@ const eventHandlers = {
                       $invoice: String!, 
                       $part: Int!,
                       $quantity: Int!, 
-                      $unit: String!
+                      $unit: String!,
+                      $new_product: Boolean!
                     ) {
                       insert_mi_products(
                         objects: {
@@ -103,8 +112,9 @@ const eventHandlers = {
                           created_by: $created_by, 
                           invoice: $invoice, 
                           part_pk: $part,
-                          quantity_received: $quantity, 
-                          unit: $unit
+                          quantity_order: $quantity, 
+                          unit: $unit,
+                          new_product: $new_product
                         }
                       ) {
                         affected_rows
@@ -118,6 +128,7 @@ const eventHandlers = {
                     part: newProduct.new_part_pk,
                     quantity: newProduct.quantity,
                     unit: newProduct.unit || "pcs",
+                    new_product: true
                   },
                 },
                 query: [],

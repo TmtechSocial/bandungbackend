@@ -9,15 +9,14 @@ const eventHandlers = {
 
     for (const item of data) {
       try {
-        const instanceId = item.parent_inst_id || null;
+        const instanceId = item.proc_inst_id || null;
 
        const dataCamunda = {
           type: "complete",
           endpoint: `/engine-rest/task/{taskId}/complete`,
-          instance: item.parent_inst_id,
+          instance: item.proc_inst_id,
           variables: {
             variables: {
-               parent_inst_id: { value: item.parent_inst_id, type: "String" },
             },
           },
         };
@@ -33,16 +32,8 @@ const eventHandlers = {
             graph: {
               method: "mutate",
               endpoint: GRAPHQL_API,
-              gqlQuery: `
-              mutation MyMutation($parent_inst_id: String!, $status_order: String!) {
-  update_mi_order(where: {parent_inst_id: {_eq: $parent_inst_id}}, _set: {status: $status_order}) {
-    affected_rows
-  }
-}
-                `,
+              gqlQuery: ``,
                 variables: {
-                  parent_inst_id: item.parent_inst_id,
-                  status_order: "Order Verified",
                 }
             },
             query: [],

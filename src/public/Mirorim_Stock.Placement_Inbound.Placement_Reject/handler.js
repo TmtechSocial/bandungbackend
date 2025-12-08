@@ -4,8 +4,8 @@ const fastify = require("fastify");
 const GRAPHQL_API = process.env.GRAPHQL_API;
 const SERVER_INVENTREE = process.env.SERVER_INVENTREE;
 const INVENTREE_API_TOKEN = process.env.INVENTREE_API_TOKEN;
-const INVENTREE_LOCATION_WIP_RETAIL = process.env.INVENTREE_LOCATION_WIP_RETAIL;
-const { transferStock, mergeStock } = require("../../utils/inventree/inventreeActions");
+const INVENTREE_LOCATION_WIP_REJECT = process.env.INVENTREE_LOCATION_WIP_REJECT;
+const { transferStock } = require("../../utils/inventree/inventreeActions");
 const axios = require("axios");
 
 const eventHandlers = {
@@ -46,7 +46,7 @@ const eventHandlers = {
           });
 
           const { data: stockItems } = await inventree.get(
-            `/stock/?location=${INVENTREE_LOCATION_WIP_RETAIL}&part=${item.part_pk}&status=10`
+            `/stock/?location=${INVENTREE_LOCATION_WIP_REJECT}&part=${item.part_pk}&status=65`
           );
 
           const stockItemId = stockItems.results.length > 0 ? stockItems.results[0].pk : null;
@@ -57,10 +57,9 @@ const eventHandlers = {
           for (const product of item.products) {
             const quantity = product.quantity_placement;
             const locationId = product.location_id;
-            const notes = `Transfer Inbound Retail | Proc ID: ${item.proc_inst_id}`;
-            const notesMerge = `Merge Inbound Retail | Proc ID: ${item.proc_inst_id}`;
+            const notes = `Transfer Inbound Reject | Proc ID: ${item.proc_inst_id}`;
             // 🔄 Transfer Stock Item di Inventree
-
+            
             const stockTransfer = await transferStock(
             stockItemId,
             quantity,
@@ -70,10 +69,6 @@ const eventHandlers = {
 
             console.log("stock Transfer", stockTransfer);
 
-            const stockMerge = await mergeStock(item.part_pk, locationId, notesMerge);
-            console.log("stock Merge", stockMerge);
-
-            // 🔄 Update quantity di database
             dataQuery.push({
               graph: {
                 method: "mutate",
