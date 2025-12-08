@@ -144,7 +144,6 @@ const eventHandlers = {
               variables: {
                 countProducts: { value: countProducts, type: "Integer" },
                 countPicked: { value: pickedTotal, type: "Integer" },
-                picked: { value: "done", type: "String" },
               },
             },
           };

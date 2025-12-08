@@ -43,6 +43,38 @@ const eventHandlers = {
     for (const item of data) {
       try {
         const instanceId = item.proc_inst_id || null;
+        const checkQuery = {
+          graph: {
+            method: "query",
+            endpoint: GRAPHQL_API,
+            gqlQuery: `
+              query CheckInvoice($invoice: String!) {
+                mi_order(where: {invoice: {_eq: $invoice}}) {
+                  id
+                }
+              }
+            `,
+            variables: { invoice: item.invoice },
+          },
+          query: [],
+        };
+
+        const checkResponse = await configureQuery(fastify, checkQuery);
+
+        // Debug logging
+        console.log("response", JSON.stringify(checkResponse, null, 2));
+
+        // Ambil data hasil query dengan struktur response yg benar
+        const miOrder =
+          checkResponse?.data?.[0]?.graph?.mi_order ??
+          checkResponse?.data?.mi_order ??
+          [];
+
+        console.log("hasil query", miOrder);
+        if (miOrder.length > 0) {
+          throw new Error(`❌ DUPLICATE! Invoice ${item.invoice} sudah pernah dibuat. Silahkan cek history purchase.`);
+        }
+
 
         const productsData = [];
         for (const product of item.products) {
@@ -62,6 +94,7 @@ const eventHandlers = {
           productsData.push({
             part: part,
             quantity: product.quantity,
+            new_product: product.new_product,
             part_name: product.part_name || null,
             unit: product.unit || null,
           });
@@ -158,16 +191,17 @@ const eventHandlers = {
           }
 
           for (const p of productsData) {
+            console.log("👉 part:", p.part, "new_product:", p.new_product); // p.new_product
             const dataQueryProduct = {
               graph: {
                 method: "mutate",
                 endpoint: GRAPHQL_API,
                 gqlQuery: `
-                  mutation MyMutation($created_at: timestamp!, $created_by: String!, $invoice: String!, $part: Int, $quantity: Int!, $task_def_key: String!, $part_name: String, $unit: String!) {
+                  mutation MyMutation($created_at: timestamp!, $created_by: String!, $invoice: String!, $part: Int, $quantity: Int!, $task_def_key: String!, $part_name: String, $unit: String!, $new_product: Boolean!) {
   insert_mi_logs(objects: {created_at: $created_at, created_by: $created_by, invoice: $invoice, part_pk: $part, quantity: $quantity, task_def_key: $task_def_key}) {
     affected_rows
   }
-  insert_mi_products(objects: {created_at: $created_at, created_by: $created_by, invoice: $invoice, part_pk: $part, part_name: $part_name, quantity_order: $quantity, unit: $unit}) {
+  insert_mi_products(objects: {created_at: $created_at, created_by: $created_by, invoice: $invoice, part_pk: $part, part_name: $part_name, quantity_order: $quantity, unit: $unit, new_product: $new_product}) {
     affected_rows
   }
 }
@@ -181,6 +215,7 @@ const eventHandlers = {
                   part_name: p.part_name || null,
                   quantity: p.quantity,
                   unit: p.unit,
+                  new_product: p.new_product,
                 },
               },
               query: [],
@@ -213,6 +248,7 @@ const eventHandlers = {
           `❌ Error executing handler for event: ${eventKey}`,
           error
         );
+        throw error;
       }
     }
 

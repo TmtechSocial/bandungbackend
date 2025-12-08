@@ -11,20 +11,37 @@ const eventHandlers = {
       try {
         const instanceId = item.proc_inst_id || null;
 
+        const now = new Date();
+        const dateCode = `${String(now.getDate()).padStart(2, "0")}-${String(
+          now.getMonth() + 1
+        ).padStart(2, "0")}-${String(now.getFullYear()).slice(2)}`;
+        const uniqueTrxRetail = `IR|${dateCode}|${item.invoice}|${item.part_pk}`;
+        const uniqueTrxWholesale = `IW|${dateCode}|${item.invoice}|${item.part_pk}`;
+        const uniqueTrxReject = `IRJ|${dateCode}|${item.invoice}|${item.part_pk}`;
+
+        console.log("productssssss", uniqueTrxRetail, uniqueTrxWholesale, uniqueTrxReject);
+
         const hasWholesale = item.products.some(
-        (group) =>
-          group.type_location === "Wholesale" &&
-          group.products.some((prod) => prod.quantity > 0)
-      );
+          (group) =>
+            group.type_location === "Wholesale" &&
+            group.products.some((prod) => prod.quantity > 0)
+        );
 
-      const hasRetail = item.products.some(
-        (group) =>
-          group.type_location === "Retail" &&
-          group.products.some((prod) => prod.quantity > 0)
-      );
+        const hasReject = item.products.some(
+          (group) =>
+            group.type_location === "Reject" &&
+            group.products.some((prod) => prod.quantity > 0)
+        );
 
-      console.log("hasWholesale", hasWholesale);
-      console.log("hasRetail", hasRetail);
+        const hasRetail = item.products.some(
+          (group) =>
+            group.type_location === "Retail" &&
+            group.products.some((prod) => prod.quantity > 0)
+        );
+
+        console.log("hasWholesale", hasWholesale);
+        console.log("hasRetail", hasRetail);
+        console.log("hasReject", hasReject);
 
         // // ✅ buat payload Camunda
         const dataCamunda = {
@@ -35,6 +52,10 @@ const eventHandlers = {
             variables: {
               whole: { value: hasWholesale, type: "Boolean" },
               retail: { value: hasRetail, type: "Boolean" },
+              reject: { value: hasReject, type: "Boolean" },
+              uniqueTrxInboundRetail: { value: uniqueTrxRetail, type: "String" },
+              uniqueTrxInboundWholesale: { value: uniqueTrxWholesale, type: "String" },
+              uniqueTrxInboundReject: { value: uniqueTrxReject, type: "String" },
             },
           },
         };
@@ -45,54 +66,64 @@ const eventHandlers = {
           process
         );
         if (responseCamunda.status === 200 || responseCamunda.status === 204) {
-
           const responseQuery = [];
           for (const productGroup of item.products) {
-  const { type_location, products } = productGroup;
+            const { type_location, products } = productGroup;
 
-  for (const product of products) {
+            for (const product of products) {
+              const finalLocationId =
+                product.available === true
+                  ? product.location_available
+                  : product.location_id;
 
-const finalLocationId =
-      product.available === true
-        ? product.location_available
-        : product.location_id;
-
-
-    const dataQueryProduct = {
-      graph: {
-        method: "mutate",
-        endpoint: GRAPHQL_API,
-        gqlQuery: `mutation MyMutation($created_at: timestamp!, $created_by: String!, $type: String!, $location_id: Int, $quantity_inbound: Int, $id: Int!) {
-  insert_mi_placement(objects: {created_at: $created_at, created_by: $created_by, updated_at: $created_at, updated_by: $created_by, type: $type, location_id: $location_id, quantity_inbound: $quantity_inbound, inbound_product_id: $id}) {
+              const dataQueryProduct = {
+                graph: {
+                  method: "mutate",
+                  endpoint: GRAPHQL_API,
+                  gqlQuery: `mutation MyMutation($created_at: timestamp!, $created_by: String!, $type: String!, $location_id: Int, $quantity_inbound: Int, $id: Int!, $unique_trx: String!) {
+  insert_mi_placement(objects: {created_at: $created_at, created_by: $created_by, updated_at: $created_at, updated_by: $created_by, type: $type, location_id: $location_id, quantity_inbound: $quantity_inbound, inbound_product_id: $id, unique_trx: $unique_trx}) {
     affected_rows
   }
 }`,
-        variables: {
-          created_at: item.created_at,
-          created_by: item.created_by,
-          id: item.id,
-          type: type_location, // ambil dari group
-          location_id: finalLocationId  === "" ? null : finalLocationId ,
-          quantity_inbound: product.quantity || 0,
-        },
-      },
-      query: [],
-    };
+                  variables: {
+                    created_at: item.created_at,
+                    created_by: item.created_by,
+                    id: item.id,
+                    type: type_location,
+                    type: type_location,
+                    unique_trx:
+                      type_location === "Retail"
+                        ? uniqueTrxRetail
+                        : type_location === "Wholesale"
+                        ? uniqueTrxWholesale
+                        : type_location === "Reject"
+                        ? uniqueTrxReject
+                        : null,
+                    location_id:
+                      finalLocationId === "" ? null : finalLocationId,
+                    quantity_inbound: product.quantity || 0,
+                  },
+                },
+                query: [],
+              };
 
-    try {
-      const resProduct = await configureQuery(fastify, dataQueryProduct);
-      responseQuery.push(resProduct);
+              try {
+                const resProduct = await configureQuery(
+                  fastify,
+                  dataQueryProduct
+                );
+                responseQuery.push(resProduct);
 
-      console.log(JSON.stringify(dataQueryProduct, null, 2));
-    } catch (err) {
-      console.error(
-        `❌ Error saat insert mi_placement (type: ${type_location}, location: ${product.location_id}):`,
-        err
-      );
-      throw err;
-    }
-  }
-}
+                console.log(JSON.stringify(dataQueryProduct, null, 2));
+              } catch (err) {
+                console.error(
+                  `❌ Error saat insert mi_placement (type: ${type_location}, location: ${product.location_id}):`,
+                  err
+                );
+                throw err;
+              }
+            }
+          }
           results.push({
             message: "Create event processed successfully",
             camunda: responseCamunda.data,

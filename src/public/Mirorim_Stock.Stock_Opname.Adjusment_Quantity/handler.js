@@ -58,6 +58,8 @@ const eventHandlers = {
   $status: String!
   $user: String!
   $created_at: timestamp!
+  $evidence: String!
+  $quantity_data: numeric!
 ) {
   insert_stock_opname_logs(objects: {
     proc_inst_id: $proc_inst_id
@@ -65,6 +67,8 @@ const eventHandlers = {
     task_def_key: $task_def_key
     created_at: $created_at
     user: $user
+    evidence: $evidence
+    quantity_data: $quantity_data
   }) {
     affected_rows
   }
@@ -82,6 +86,8 @@ const eventHandlers = {
                 created_at: new Date(
                   new Date().getTime() + 7 * 60 * 60 * 1000
                 ).toISOString(),
+                evidence: item.evidence[0] || "",
+                quantity_data: item.total_quantity_system || 0,
               },
             },
             query: [],

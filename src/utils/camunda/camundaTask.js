@@ -1,15 +1,14 @@
 const { Pool } = require("pg");
 const dayjs = require("dayjs");
 const { getTasksWithMultiClaimInfo } = require("./processDefinition");
-const { fetchUserGroups } = require("./camundaUserGroups");
 
 // Database configuration - Use Pool instead of Client
 const pool = new Pool({
   user: process.env.DB_USER,
-  password: "Mamat.01",
+  password: '1234',
   host: process.env.DB_HOST,
-  database: "camunda",
-  port: 5434,
+  database: 'camunda',
+  port: 5432,
   max: 20, // Maximum number of clients in the pool
   idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
   connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection could not be established
@@ -25,6 +24,7 @@ pool.on("error", (err) => {
   process.exit(-1);
 });
 
+console.log("Database pool initialized successfully");
 // Modified query to handle business key with timestamps correctly
 const getTasksQuery = `
   WITH task_variables AS (
@@ -78,7 +78,7 @@ AND (
         t.id_ IN (
             SELECT tid.task_id_ 
             FROM act_ru_identitylink tid 
-            WHERE (tid.group_id_ = ANY($2::text[]) OR tid.user_id_ = $1)
+            WHERE (tid.group_id_ = $2 OR tid.user_id_ = $1)
         )
         AND (t.assignee_ IS NULL OR t.assignee_ = '')
     )
@@ -148,48 +148,29 @@ module.exports.fetchAllTasks = async (
   returnRaw = false,
   wsBroadcaster = null
 ) => {
-  // console.log("Fetching tasks for initiatorId:", initiatorId, "group:", group);
-
-  let groupIds = [];
-  try {
-    const groups = await fetchUserGroups(initiatorId);
-    if (Array.isArray(groups) && groups.length > 0) {
-      groupIds = groups.map((g) => g.id);
-    } else {
-      // console.log(`No Camunda groups found for user ${initiatorId}; using empty group list`);
-      groupIds = [];
-    }
-  } catch (err) {
-    console.error(
-      `Error fetching groups for ${initiatorId}:`,
-      err.message || err
-    );
-    // Fallback to empty array so query still runs but won't match any group_id_
-    groupIds = [];
-  }
+  console.log("Fetching tasks for initiatorId:", initiatorId, "group:", group);
 
   // Use pool.query directly - no need for manual connection management
   try {
     const { rows: tasks } = await pool.query(getTasksQuery, [
       initiatorId,
-      groupIds,
+      group || "",
     ]);
-    // console.log(`Fetched ${tasks.length} tasks from database`);
+    console.log(`Fetched ${tasks.length} tasks from database`);
 
     const processedTasks = tasks.map(processTask);
-    // console.log(`Processed ${processedTasks.length} tasks`);
+    console.log(`Processed ${processedTasks.length} tasks`);
 
     // Add multi-claim information to tasks
-    // console.log("ðŸ” Adding multi-claim information to tasks...");
+    // console.log("🔍 Adding multi-claim information to tasks...");
     const tasksWithMultiClaim = await getTasksWithMultiClaimInfo(
       processedTasks
     );
     // console.log(
-    //   `âœ… Added multi-claim info to ${tasksWithMultiClaim.length} tasks`
+    //   `✅ Added multi-claim info to ${tasksWithMultiClaim.length} tasks`
     // );
 
     const groupedTasks = groupTasksByKey(tasksWithMultiClaim);
-    // console.log("🟠 groupedTasks", groupedTasks);
 
     // If wsBroadcaster is provided, broadcast task updates to all clients
     if (wsBroadcaster && typeof wsBroadcaster === "function") {
@@ -219,7 +200,6 @@ module.exports.fetchAllTasks = async (
     }
 
     if (returnRaw) {
-      // console.log("💕", returnRaw);
       return tasksWithMultiClaim;
     }
 
@@ -235,31 +215,13 @@ module.exports.fetchAllTasks = async (
 // Add a new method to force a refresh without throttling
 module.exports.forceRefreshTasks = async (
   initiatorId,
+  group,
   wsBroadcaster = null
 ) => {
   try {
-    let groupIds = [];
-    try {
-      const groups = await fetchUserGroups(initiatorId);
-      if (Array.isArray(groups) && groups.length > 0) {
-        groupIds = groups.map((g) => g.id);
-      } else {
-        console.log(
-          `No Camunda groups found for user ${initiatorId}; using empty group list`
-        );
-        groupIds = [];
-      }
-    } catch (err) {
-      console.error(
-        `Error fetching groups for ${initiatorId}:`,
-        err.message || err
-      );
-      groupIds = [];
-    }
-
     const { rows: tasks } = await pool.query(getTasksQuery, [
       initiatorId,
-      groupIds,
+      group || "mirorim",
     ]);
     const processedTasks = tasks.map(processTask);
 
@@ -300,3 +262,4 @@ module.exports.closePool = async () => {
     console.error("Error closing database pool:", err);
   }
 };
+

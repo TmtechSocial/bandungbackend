@@ -38,6 +38,13 @@ const eventHandlers = {
           );
           stockGetDesc = await getDescStock(partPk, locationPk);
 
+          const stockTransfer = await transferStock(
+            stockPk,
+            quantity,
+            locationPk,
+            notesTransfer
+          );
+          stockGetDesc = await getDescStock(partPk, locationPk);
           console.log("stockGetDesc:", stockGetDesc);
 
           // Payload Camunda untuk mode normal
@@ -57,7 +64,7 @@ const eventHandlers = {
                 },
                 part_id: { value: item.part_id, type: "Integer" },
                 source_stock: { value: stockGetDesc, type: "Integer" },
-                primary_stock: { value: item.source_id, type: "Integer" },
+                primary_stock: { value: primary_stock, type: "Integer" },
                 id: { value: item.id, type: "Integer" },
                 quantity_staging: {
                   value: item.quantity_staging,

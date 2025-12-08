@@ -4,6 +4,8 @@ const fastify = require("fastify");
 const GRAPHQL_API = process.env.GRAPHQL_API;
 const SERVER_INVENTREE = process.env.SERVER_INVENTREE;
 const INVENTREE_API_TOKEN = process.env.INVENTREE_API_TOKEN;
+const INVENTREE_LOCATION_WIP_RETAIL = process.env.INVENTREE_LOCATION_WIP_RETAIL;
+const { transferStock, mergeStock } = require("../../utils/inventree/inventreeActions");
 const axios = require("axios");
 
 const eventHandlers = {
@@ -14,12 +16,16 @@ const eventHandlers = {
       try {
         const instanceId = item.proc_inst_id || null;
 
+        const evidence = JSON.stringify(item.evidence) ||  [];
+
         const dataCamunda = {
           type: "complete",
           endpoint: `/engine-rest/task/{taskId}/complete`,
           instance: item.proc_inst_id,
           variables: {
-            variables: {},
+            variables: {
+              evidence_placement_inbound_retail: { value: evidence, type: "String" },
+            },
           },
         };
 
@@ -30,7 +36,6 @@ const eventHandlers = {
         );
 
         if (responseCamunda.status === 200 || responseCamunda.status === 204) {
-
           const inventree = axios.create({
             baseURL: `${SERVER_INVENTREE}/api`,
             headers: {
@@ -40,31 +45,35 @@ const eventHandlers = {
             timeout: 10000,
           });
 
-          
+          const { data: stockItems } = await inventree.get(
+            `/stock/?location=${INVENTREE_LOCATION_WIP_RETAIL}&part=${item.part_pk}&status=10`
+          );
+
+          const stockItemId = stockItems.results.length > 0 ? stockItems.results[0].pk : null;
+
           const dataQuery = [];
-          
+
           // --- Loop untuk existing products ---
           for (const product of item.products) {
-            // 🔄 Transfer Stock Item di Inventree 
-             const transferPayload = {
-                items: [
-                  {
-                    pk: Number(product.stock_item_id),
-                    quantity: product.quantity_placement,
-                  },
-                ],
-                notes: `Transfer Inbound Retail | Proc ID: ${item.proc_inst_id}`,
-                location: product.location_id,
-              };
+            const quantity = product.quantity_placement;
+            const locationId = product.location_id;
+            const notes = `Transfer Inbound Retail | Proc ID: ${item.proc_inst_id}`;
+            const notesMerge = `Merge Inbound Retail | Proc ID: ${item.proc_inst_id}`;
+            // 🔄 Transfer Stock Item di Inventree
 
-const { data: stockData } = await inventree.post(
-  "/stock/transfer/",
-  transferPayload
-);
+            const stockTransfer = await transferStock(
+            stockItemId,
+            quantity,
+            locationId,
+            notes
+          );
 
-console.log("stockData", stockData);
+            console.log("stock Transfer", stockTransfer);
 
+            const stockMerge = await mergeStock(item.part_pk, locationId, notesMerge);
+            console.log("stock Merge", stockMerge);
 
+            // 🔄 Update quantity di database
             dataQuery.push({
               graph: {
                 method: "mutate",
@@ -104,7 +113,7 @@ console.log("stockData", stockData);
             dataQuery.map((query) => configureQuery(fastify, query))
           );
 
-console.log("responseQuery", JSON.stringify(responseQuery, null, 2));
+          console.log("responseQuery", JSON.stringify(responseQuery, null, 2));
 
           results.push({
             message: "Create event processed successfully",
@@ -113,7 +122,10 @@ console.log("responseQuery", JSON.stringify(responseQuery, null, 2));
           });
         }
       } catch (error) {
-        console.error(`❌ Error executing handler for event: ${error.message}`, error);
+        console.error(
+          `❌ Error executing handler for event: ${error.message}`,
+          error
+        );
       }
     }
 
@@ -143,4 +155,3 @@ const handle = async (eventData) => {
 };
 
 module.exports = { handle };
-

@@ -34,8 +34,15 @@ const eventHandlers = {
               method: "mutate",
               endpoint: GRAPHQL_API,
               gqlQuery: `
+              mutation MyMutation($parent_inst_id: String!, $status_order: String!) {
+  update_mi_order(where: {parent_inst_id: {_eq: $parent_inst_id}}, _set: {status: $status_order}) {
+    affected_rows
+  }
+}
                 `,
                 variables: {
+                  parent_inst_id: item.parent_inst_id,
+                  status_order: "Order Verified",
                 }
             },
             query: [],

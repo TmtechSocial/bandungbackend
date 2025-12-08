@@ -1,0 +1,9 @@
+{
+                    "key": "qrCode",
+                    "html": "<div style='text-align:center;'><img src='https://mirorim.ddns.net:6789/backendBandung/generate-qr/{{row.mo_refill_id}}' alt='QR Code' style='max-width:1000px; width:100%;'/></div>",
+                    "type": "content",
+                    "input": false,
+                    "label": "QR Code",
+                    "tableView": false,
+                    "refreshOnChange": true
+                }

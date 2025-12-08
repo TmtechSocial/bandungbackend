@@ -20,7 +20,7 @@ const eventHandlers = {
           endpoint: `/engine-rest/process-definition/key/Mirorim_Stock.Trigger_Inbound/start`,
           variables: {
             variables: {
-              invoice_supplier: { value: item.invoice, type: "String" },
+              invoice_supplier: { value: item.invoice, type: "String" }
             },
             businessKey: `${item.invoice}:${item.created_at}:${item.created_by}`,
           },
@@ -40,8 +40,8 @@ const eventHandlers = {
               method: "mutate",
               endpoint: GRAPHQL_API,
               gqlQuery: `
-                mutation UpdateMPOrder($invoice: String!, $status: String!) {
-  update_mi_order(where: {invoice: {_eq: $invoice}}, _set: {status: $status}) {
+                mutation UpdateMPOrder($invoice: String!, $status: String!, $kubikasi: String!, $koli: Int!) {
+  update_mi_order(where: {invoice: {_eq: $invoice}}, _set: {status: $status, koli: $koli, kubikasi: $kubikasi}) {
     affected_rows
   }
 }
@@ -49,6 +49,8 @@ const eventHandlers = {
               variables: {
                 invoice: item.invoice,
                 status: "On Progress",
+                kubikasi: item.kubikasi,
+                koli: item.koli
               },
             },
             query: [],
@@ -70,11 +72,8 @@ const eventHandlers = {
                 method: "mutate",
                 endpoint: GRAPHQL_API,
                 gqlQuery: `
-                  mutation MyMutation($created_at: timestamp!, $created_by: String!, $invoice: String!, $part: Int, $quantity: Int!, $task_def_key: String!) {
-  insert_mi_logs(objects: {created_at: $created_at, created_by: $created_by, invoice: $invoice, part_pk: $part, quantity: $quantity, task_def_key: $task_def_key}) {
-    affected_rows
-  }
-    update_mi_products( where: {part_pk: {_eq: $part}, invoice: {_eq: $invoice}}, _set: {quantity_received: $quantity}) {
+                  mutation MyMutation($created_at: timestamp!, $created_by: String!, $invoice: String!, $part: Int, $task_def_key: String!) {
+  insert_mi_logs(objects: {created_at: $created_at, created_by: $created_by, invoice: $invoice, part_pk: $part, task_def_key: $task_def_key}) {
     affected_rows
   }
 }
@@ -84,8 +83,7 @@ const eventHandlers = {
                   created_by: item.created_by,
                   task_def_key: "Mirorim_Stock.Trigger_Inbound",
                   invoice: item.invoice,
-                  part: product.part_pk || null,
-                  quantity: product.quantity_received,
+                  part: product.part_pk || null
                 },
               },
               query: [],

@@ -47,9 +47,7 @@ const eventHandlers = {
           const locationPk = 6225;
           const stockPk = item.source_id;
           const quantity = item.quantity_staging;
-
           const notesTransfer = `Transfer stock WIP In Transit ${instanceId}`;
-
           console.log("source_id:", stockPk);
 
           const stockTransfer = await transferStock(
@@ -60,6 +58,13 @@ const eventHandlers = {
           );
           stockGetDesc = await getDescStock(partPk, locationPk);
 
+          const stockTransfer = await transferStock(
+            stockPk,
+            quantity,
+            locationPk,
+            notesTransfer
+          );
+          stockGetDesc = await getDescStock(partPk, locationPk);
           console.log("stockGetDesc:", stockGetDesc);
 
           // 🔹 Kirim data ke Camunda
@@ -113,7 +118,6 @@ const eventHandlers = {
           process
         );
         console.log("responseCamunda", responseCamunda.status);
-
         if (responseCamunda.status === 200 || responseCamunda.status === 204) {
           for (const product of item.products || []) {
             let dataQuery = null;

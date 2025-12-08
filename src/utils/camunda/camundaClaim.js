@@ -99,9 +99,6 @@ async function claimTask(request, reply, websocketManager) {
       }
     }
     
-    console.log("ekseksusiiii", task.id);
-    console.log("eksuksiii", userId);
-    
     const response = await axios.post(
       `/engine-rest/task/${task.id}/claim`,
       { userId },
@@ -234,4 +231,3 @@ module.exports = {
   claimTask,
   unclaimTask,
 };
-

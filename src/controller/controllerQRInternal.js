@@ -3,31 +3,12 @@ require("dotenv").config();
 const { Client } = require("pg");
 const { DB_USER, DB_PASSWORD, DB_HOST, DB_PORT } = process.env;
 const { fetchCamundaTasksByProcInstId } = require("./camundaTaskApi");
-const { fetchUserGroups } = require("../utils/camunda/camundaUserGroups");
 const groupTaskMap = require("./groupTaskMap");
 
 async function checkQRInternal(fastify, input, groups, userId) {
   const connectionString = `postgres://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/camunda`;
   const client = new Client({ connectionString });
-  let groupIds = [];
-  try {
-    const groups = await fetchUserGroups(userId);
-    if (Array.isArray(groups) && groups.length > 0) {   
-      groupIds = groups.map((g) => g.id);
-    } else {
-      console.log(
-        `No Camunda groups found for user ${userId}; using empty group list`
-      );
-      groupIds = [];
-    }
-  } catch (err) {
-    console.error(
-      `Error fetching groups for ${userId}:`,
-      err.message || err
-    );
-    // Fallback to empty array so query still runs but won't match any group_id_
-    groupIds = [];
-  }
+
   try {
     await client.connect();
 
@@ -61,8 +42,8 @@ order by act_hi_procinst.start_time_ desc limit 1
 
     // Buat list task_def_key yang boleh diambil oleh group
     let allowedTaskDefKeys = [];
-    if (Array.isArray(groupIds)) {
-      groupIds.forEach(group => {
+    if (Array.isArray(groups)) {
+      groups.forEach(group => {
         const groupName = group.name || group; // Handle both object and string format
         //console.log(`Processing group: ${groupName}, taskMap entry:`, groupTaskMap[groupName]);
         if (groupTaskMap[groupName]) {

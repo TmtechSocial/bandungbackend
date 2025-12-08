@@ -1,0 +1,44 @@
+{
+  "onRender": {
+    "api": {
+      "imageFromPk": {
+        "url": "http://36.50.112.247:8004/api/part/:id/",
+        "path": {
+          "id": "${graph.mo_retur_receive.invoice_retur_to_invoice.part_pk}"
+        },
+        "method": "GET",
+        "headers": {
+          "Authorization": "Basic YWRtaW46YWRtaW4="
+        }
+      },
+      "productsFromInvoice": {
+        "url": "http://localhost:9000/v1/graphql",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "params": {
+          "invoice": "${invoice}"
+        },
+        "gqlQuery": "query GetProductsByInvoice($invoice: String!) { mo_retur_receive(where: {invoice: {_eq: $invoice}}) { invoice_retur_to_invoice { sku_toko product_name part_pk quantity_convert } } }",
+        "variables": {
+          "invoice": "${invoice}"
+        }
+      }
+    },
+    "graph": {
+      "method": "query",
+      "endpoint": "http://localhost:9000/v1/graphql",
+      "gqlQuery": "query MyQuery($proc_inst_id: [String!]) { mo_retur_receive(where: {proc_inst_id: {_in: $proc_inst_id}}) { proc_inst_id resi_retur invoice retur_date courier courier_name invoice_retur_to_invoice { sku_toko product_name part_pk quantity_convert } } }",
+      "variables": {
+        "proc_inst_id": "${instance}"
+      }
+    },
+    "query": "",
+    "endpoint": "/dynamicQuery/data"
+  },
+  "onSubmit": {
+    "method": "POST",
+    "endpoint": "http://localhost:5000/dynamicSubmit"
+  }
+}

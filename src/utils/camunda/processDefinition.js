@@ -11,12 +11,12 @@ async function getProcessDefinition(processDefinitionKey) {
   const cached = processDefinitionCache.get(cacheKey);
   
   if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
-    // console.log(`📦 Using cached process definition for: ${processDefinitionKey}`);
+    // console.log(`ðŸ“¦ Using cached process definition for: ${processDefinitionKey}`);
     return cached.data;
   }
 
   try {
-    // console.log(`🔍 Fetching process definition for: ${processDefinitionKey}`);
+    // console.log(`ðŸ” Fetching process definition for: ${processDefinitionKey}`);
     
     const response = await axios.get(
       `/engine-rest/process-definition/key/${processDefinitionKey}/xml`,
@@ -35,11 +35,11 @@ async function getProcessDefinition(processDefinitionKey) {
       timestamp: Date.now()
     });
 
-    // console.log(`✅ Process definition fetched for: ${processDefinitionKey}`);
+    // console.log(`âœ… Process definition fetched for: ${processDefinitionKey}`);
     return processDefinition;
     
   } catch (error) {
-    console.error(`❌ Error fetching process definition for ${processDefinitionKey}:`, error.message);
+    console.error(`âŒ Error fetching process definition for ${processDefinitionKey}:`, error.message);
     throw new Error(`Failed to fetch process definition: ${error.message}`);
   }
 }
@@ -54,11 +54,11 @@ function isMultiClaimEnabled(bpmn20Xml) {
     const multiClaimRegex = /<camunda:property\s+name="multiClaim"\s+value="true"\s*\/>/i;
     const hasMultiClaim = multiClaimRegex.test(bpmn20Xml);
     
-    // console.log(`🔍 Multi-claim check result: ${hasMultiClaim}`);
+    // console.log(`ðŸ” Multi-claim check result: ${hasMultiClaim}`);
     return hasMultiClaim;
     
   } catch (error) {
-    console.error('❌ Error parsing BPMN XML for multi-claim:', error);
+    console.error('âŒ Error parsing BPMN XML for multi-claim:', error);
     return false;
   }
 }
@@ -68,29 +68,29 @@ async function checkTaskMultiClaim(taskDefinitionKey) {
     // Extract process definition key from task definition key
     const processDefinitionKey = extractProcessDefinitionKey(taskDefinitionKey);
     
-    // console.log(`🔍 Extracting process definition key:`);
+    // console.log(`ðŸ” Extracting process definition key:`);
     // console.log(`   Task Definition Key: ${taskDefinitionKey}`);
     // console.log(`   Process Definition Key: ${processDefinitionKey}`);
     
     if (!processDefinitionKey) {
-      console.warn(`⚠️ Could not extract process definition key from: ${taskDefinitionKey}`);
+      console.warn(`âš ï¸ Could not extract process definition key from: ${taskDefinitionKey}`);
       return false;
     }
 
     const processDefinition = await getProcessDefinition(processDefinitionKey);
     
     if (!processDefinition || !processDefinition.bpmn20Xml) {
-      console.warn(`⚠️ No BPMN XML found for process: ${processDefinitionKey}`);
+      console.warn(`âš ï¸ No BPMN XML found for process: ${processDefinitionKey}`);
       return false;
     }
 
     const isMultiClaim = isMultiClaimEnabled(processDefinition.bpmn20Xml);
-    // console.log(`🎯 Task ${taskDefinitionKey} multi-claim enabled: ${isMultiClaim}`);
+    // console.log(`ðŸŽ¯ Task ${taskDefinitionKey} multi-claim enabled: ${isMultiClaim}`);
     
     return isMultiClaim;
     
   } catch (error) {
-    console.error(`❌ Error checking multi-claim for task ${taskDefinitionKey}:`, error.message);
+    console.error(`âŒ Error checking multi-claim for task ${taskDefinitionKey}:`, error.message);
     return false; // Default to single claim on error
   }
 }
@@ -140,22 +140,22 @@ async function getTasksWithMultiClaimInfo(tasks) {
 
     const processDefKey = extractProcessDefinitionKey(task.taskDefinitionKey);
 
-    // console.log(`🔍 Processing task: ${task.taskDefinitionKey}`);
-    // console.log(`📋 Extracted process definition key: ${processDefKey}`);
+    // console.log(`ðŸ” Processing task: ${task.taskDefinitionKey}`);
+    // console.log(`ðŸ“‹ Extracted process definition key: ${processDefKey}`);
     
     // Skip jika sudah pernah di-check untuk process yang sama
     let multiClaimEnabled = false;
     if (!processedKeys.has(processDefKey)) {
       multiClaimEnabled = await checkTaskMultiClaim(task.taskDefinitionKey);
       processedKeys.add(processDefKey);
-      // console.log(`✅ Multi-claim check for ${processDefKey}: ${multiClaimEnabled}`);
+      // console.log(`âœ… Multi-claim check for ${processDefKey}: ${multiClaimEnabled}`);
     } else {
       // Gunakan hasil dari task sebelumnya dengan process definition yang sama
       const previousTask = tasksWithMultiClaim.find(t => 
         extractProcessDefinitionKey(t.taskDefinitionKey) === processDefKey
       );
       multiClaimEnabled = previousTask ? (previousTask.multiClaim || previousTask.multiClaimEnabled) : false;
-      // console.log(`📋 Using cached result for ${processDefKey}: ${multiClaimEnabled}`);
+      // console.log(`ðŸ“‹ Using cached result for ${processDefKey}: ${multiClaimEnabled}`);
     }
 
     tasksWithMultiClaim.push({
@@ -171,7 +171,7 @@ async function getTasksWithMultiClaimInfo(tasks) {
 // Clear cache function (untuk maintenance)
 function clearProcessDefinitionCache() {
   processDefinitionCache.clear();
-  // console.log('🧹 Process definition cache cleared');
+  // console.log('ðŸ§¹ Process definition cache cleared');
 }
 
 module.exports = {
