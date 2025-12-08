@@ -4,7 +4,6 @@ const camundaConfig = require("../../utils/camunda/camundaConfig");
 const {
   transferStock,
   getDescStock,
-  createStockTransferEqual
 } = require("../../utils/inventree/inventreeActions");
 const fastify = require("fastify");
 const axios = require("axios");
@@ -31,17 +30,13 @@ const eventHandlers = {
 
           console.log("source_id:", stockPk);
 
-          if (item.quantity_staging == item.quantity_data) {
-            const newPrimary = await createStockTransferEqual(
-              partPk,
-              0,
-              stockPk
-            );
-            console.log("createStockTransferEqual result:", newPrimary);
-            primary_stock = newPrimary;
-          } else {
-            primary_stock = item.source_id;
-          }
+          const stockTransfer = await transferStock(
+            stockPk,
+            quantity,
+            locationPk,
+            notesTransfer
+          );
+          stockGetDesc = await getDescStock(partPk, locationPk);
 
           const stockTransfer = await transferStock(
             stockPk,
@@ -118,11 +113,11 @@ const eventHandlers = {
                 method: "mutate",
                 endpoint: GRAPHQL_API,
                 gqlQuery: `
-                  mutation UpdateMutasi($request_id: Int!, $source_id: String!, $stock_id: String!, $user: String!, $date: timestamp!, $quantity_pick: Int!, $quantity_fisik: Int!, $quantity_data: Int!, $proc_inst_id: String!, $status: String!) {
+                  mutation UpdateMutasi($request_id: Int!, $source_id: String!, $stock_id: String!, $user: String!, $date: timestamp!, $quantity_pick: Int!, $quantity_fisik: Int!, $quantity_data: Int!, $proc_inst_id: String!, $status: String!, $evidence_picking: String!) {
   updateDetails: update_mutasi_request_details(where: {request_id: {_eq: $request_id}, source_id: {_eq: $source_id}, type: {_eq: "source"}}, _set: {updated_by: $user, updated_at: $date, quantity: $quantity_pick, quantity_physical: $quantity_fisik, quantity_data: $quantity_data, source_id: $stock_id}) {
     affected_rows
   }
-  updateRequest: update_mutasi_request(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {quantity: $quantity_pick, status: $status}) {
+  updateRequest: update_mutasi_request(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {quantity: $quantity_pick, status: $status, evidence_picking: $evidence_picking}) {
     affected_rows
   }
 }
@@ -138,6 +133,7 @@ const eventHandlers = {
                   quantity_fisik: product.quantity_fisik || 0,
                   quantity_data: item.quantity_data || 0,
                   status: "Completed",
+                  evidence_picking: item.evidence[0] || "",
                 },
               },
               query: [],

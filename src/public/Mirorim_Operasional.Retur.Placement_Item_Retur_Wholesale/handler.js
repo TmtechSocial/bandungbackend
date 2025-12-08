@@ -33,7 +33,11 @@ const eventHandlers = {
           },
         };
 
-        const responseCamunda = await camundaConfig(dataCamunda, instanceId, process);
+        const responseCamunda = await camundaConfig(
+          dataCamunda,
+          instanceId,
+          process
+        );
 
         // --- Jika berhasil dari Camunda ---
         if ([200, 204].includes(responseCamunda.status)) {
@@ -80,10 +84,10 @@ const eventHandlers = {
                 method: "mutate",
                 endpoint: GRAPHQL_API,
                 gqlQuery: `
-                  mutation UpdateQuantity($id: Int!, $quantity: Int!) {
+                  mutation UpdateQuantity($id: Int!, $quantity: Int!, $evidence: String!) {
                     update_mo_retur_placement(
                       where: { id: { _eq: $id } },
-                      _set: { quantity_placement: $quantity }
+                      _set: { quantity_placement: $quantity, evidence: $evidence }
                     ) {
                       affected_rows
                     }
@@ -92,6 +96,7 @@ const eventHandlers = {
                 variables: {
                   id: Number(product.id),
                   quantity: Number(product.quantity_placement),
+                  evidence: item.evidence[0] || "",
                 },
               },
               query: [],
@@ -110,7 +115,10 @@ const eventHandlers = {
           });
         }
       } catch (error) {
-        console.error(`❌ Error executing handler for event: ${eventKey}`, error.message);
+        console.error(
+          `❌ Error executing handler for event: ${eventKey}`,
+          error.message
+        );
         results.push({ error: error.message });
       }
     }
@@ -136,7 +144,10 @@ const handle = async (eventData) => {
   try {
     return await eventHandlers[eventKey](data, process, eventKey);
   } catch (error) {
-    console.error(`❌ Error executing handler for event: ${eventKey}`, error.message);
+    console.error(
+      `❌ Error executing handler for event: ${eventKey}`,
+      error.message
+    );
     throw error;
   }
 };

@@ -3,7 +3,6 @@ const camundaConfig = require("../../utils/camunda/camundaConfig");
 const {
   transferStock,
   getDescStock,
-  createStockTransferEqual,
 } = require("../../utils/inventree/inventreeActions");
 const axios = require("axios");
 
@@ -42,6 +41,8 @@ const eventHandlers = {
             WIPDestination = 1000003;
           }
 
+          console.log("WIPDestination:", WIPDestination);
+
           const partPk = item.part_id;
           const locationPk = 6225;
           const stockPk = item.source_id;
@@ -49,19 +50,13 @@ const eventHandlers = {
           const notesTransfer = `Transfer stock WIP In Transit ${instanceId}`;
           console.log("source_id:", stockPk);
 
-          console.log("WIPDestination:", WIPDestination);
-
-          if (item.quantity_staging == item.quantity_data) {
-            const newPrimary = await createStockTransferEqual(
-              partPk,
-              0,
-              stockPk
-            );
-            console.log("createStockTransferEqual result:", newPrimary);
-            primary_stock = newPrimary;
-          } else {
-            primary_stock = item.source_id;
-          }
+          const stockTransfer = await transferStock(
+            stockPk,
+            quantity,
+            locationPk,
+            notesTransfer
+          );
+          stockGetDesc = await getDescStock(partPk, locationPk);
 
           const stockTransfer = await transferStock(
             stockPk,
@@ -86,7 +81,7 @@ const eventHandlers = {
                 part_id: { value: item.part_id || null, type: "Integer" },
                 id: { value: item.id || null, type: "Integer" },
                 source_stock: { value: stockGetDesc, type: "Integer" },
-                primary_stock: { value: primary_stock, type: "Integer" },
+                primary_stock: { value: item.source_id, type: "Integer" },
                 quantity_staging: {
                   value: item.quantity_staging || 0,
                   type: "Integer",
@@ -148,6 +143,7 @@ const eventHandlers = {
                       $quantity_fisik: Int!
                       $quantity_data: Int!
                       $proc_inst_id: String!
+                      $evidence_picking: String!
                     ) {
                       updateDetails: update_mutasi_request_details(
                         where: { 
@@ -168,7 +164,8 @@ const eventHandlers = {
                       }
                       updateRequest: update_mutasi_request(
                         where: { proc_inst_id: { _eq: $proc_inst_id } },
-                        _set: { quantity: $quantity_pick }
+                        _set: { quantity: $quantity_pick, 
+                          evidence_picking: $evidence_picking }
                       ) {
                         affected_rows
                       }
@@ -184,6 +181,7 @@ const eventHandlers = {
                     quantity_pick: product.quantity_pick || 0,
                     quantity_fisik: product.quantity_fisik || 0,
                     quantity_data: item.quantity_data || 0,
+                    evidence_picking: item.evidence[0] || "",
                   },
                 },
                 query: [],
