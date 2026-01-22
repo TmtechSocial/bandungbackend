@@ -222,13 +222,10 @@ import("camunda-external-task-client-js").then(
           second: "2-digit",
         });
         const parts = formatter.formatToParts(date);
-        const formatted = `${parts.find((p) => p.type === "year").value}-${
-          parts.find((p) => p.type === "month").value
-        }-${parts.find((p) => p.type === "day").value} ${
-          parts.find((p) => p.type === "hour").value
-        }:${parts.find((p) => p.type === "minute").value}:${
-          parts.find((p) => p.type === "second").value
-        }`;
+        const formatted = `${parts.find((p) => p.type === "year").value}-${parts.find((p) => p.type === "month").value
+          }-${parts.find((p) => p.type === "day").value} ${parts.find((p) => p.type === "hour").value
+          }:${parts.find((p) => p.type === "minute").value}:${parts.find((p) => p.type === "second").value
+          }`;
 
         console.log({ isValid, product_name, formatted });
 
@@ -325,8 +322,7 @@ import("camunda-external-task-client-js").then(
 
           // 2. GET stok di lokasi tujuan (toko)
           const locationResponse = await axios.get(
-            `${
-              process.env.SERVER_INVENTREE
+            `${process.env.SERVER_INVENTREE
             }/api/stock/?location=${encodeURIComponent(
               destination_location_id
             )}&part=${encodeURIComponent(part_id)}`,
@@ -680,7 +676,7 @@ import("camunda-external-task-client-js").then(
             !ordersDataNotPicking ||
             ordersDataNotPicking.length === 0 ||
             !ordersDataNotPicking[0].graph.mo_order_shop.length
-          ){
+          ) {
             throw new Error(
               "Data pesanan tidak ditemukan untuk proc_inst_id: " + proc_inst_id
             );
@@ -696,8 +692,7 @@ import("camunda-external-task-client-js").then(
 
           // Cari semua lokasi yang cocok
           const locationResponse = await axios.get(
-            `${
-              process.env.SERVER_INVENTREE
+            `${process.env.SERVER_INVENTREE
             }/api/stock/location/?name=${encodeURIComponent(sku_toko)}`,
             {
               headers: {
@@ -837,8 +832,7 @@ import("camunda-external-task-client-js").then(
           try {
             // Cari lokasi sesuai SKU
             const locationResponse = await axios.get(
-              `${
-                process.env.SERVER_INVENTREE
+              `${process.env.SERVER_INVENTREE
               }/api/stock/location/?name=${encodeURIComponent(sku)}`,
               {
                 headers: {
@@ -1630,7 +1624,7 @@ import("camunda-external-task-client-js").then(
         if (buildOrders.length === 0) {
           throw new Error(
             "❌ Data mo_prepare_build_order tidak ditemukan untuk processInstanceId: " +
-              proc_inst_id
+            proc_inst_id
           );
         }
 
@@ -1759,7 +1753,7 @@ import("camunda-external-task-client-js").then(
         if (buildOrders.length === 0) {
           throw new Error(
             "❌ Data mo_prepare_build_order tidak ditemukan untuk processInstanceId: " +
-              proc_inst_id
+            proc_inst_id
           );
         }
 
@@ -1785,8 +1779,7 @@ import("camunda-external-task-client-js").then(
 
           // Ambil output (pk) hasil build
           const selectOutput = await axios.get(
-            `${
-              process.env.SERVER_INVENTREE
+            `${process.env.SERVER_INVENTREE
             }/api/stock/?build=${encodeURIComponent(build_id)}&in_stock=false`,
             {
               headers: {
@@ -1903,7 +1896,7 @@ import("camunda-external-task-client-js").then(
           if (buildOrders.length === 0) {
             throw new Error(
               "❌ Data mo_prepare_build_order_partial tidak ditemukan untuk processInstanceId: " +
-                proc_inst_id
+              proc_inst_id
             );
           }
 
@@ -1929,8 +1922,7 @@ import("camunda-external-task-client-js").then(
 
             // 🔍 Ambil stock item hasil build
             const selectOutput = await axios.get(
-              `${
-                process.env.SERVER_INVENTREE
+              `${process.env.SERVER_INVENTREE
               }/api/stock/?build=${encodeURIComponent(
                 build_id
               )}&in_stock=false`,
@@ -5776,5 +5768,392 @@ import("camunda-external-task-client-js").then(
         });
       }
     });
+
+    client.subscribe(
+      "getVariableProduct",
+      async function ({ task, taskService }) {
+        try {
+          const inventree = axios.create({
+            baseURL: `${process.env.SERVER_INVENTREE}/api`,
+            headers: {
+              Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+            },
+            timeout: 10000,
+          });
+
+          const proc_inst_id = task.processInstanceId;
+          const part_id = task.variables.get("part_id");
+          const product = await inventree.get(`/part/${part_id}/`);
+          const product_name = product?.data?.full_name;
+          const retail_sku = product?.data?.keywords || "available";
+          const responseInventree = await inventree.get(
+            `/part/parameter/?part=${part_id}&template=9`
+          );
+          const weight_per_unit =
+            responseInventree?.data?.results?.[0]?.data_numeric || 0;
+          const res = await configureQuery(fastify, {
+            graph: {
+              method: "query",
+              endpoint: process.env.GRAPHQL_API,
+              gqlQuery: `
+                        query MyQuery($part_id : Int!) {
+  vw_report_product_configure(where: {part_id: {_eq: $part_id}}) {
+    segmentasi
+  }
+}
+
+                    `,
+              variables: { part_id },
+            },
+            query: [],
+          });
+          console.log("res segmentasi:", JSON.stringify(res, null, 2));
+          const segmentasi =
+            res?.data?.[0]?.graph?.vw_report_product_configure?.[0]
+              ?.segmentasi;
+
+          const business_key = `${retail_sku} : ${product_name} : Segmen ${segmentasi}`;
+          const today = new Date();
+          today.setHours(23, 0, 0, 0);
+          const datePart = today.toLocaleDateString('sv-SE', { timeZone: 'Asia/Jakarta' });
+          const yyyy = datePart.slice(0, 4);
+          const deadline_system = `${yyyy}-${datePart.slice(5)}T23:00:00`;
+          const variables = new Variables();
+          variables.set("business_key", business_key);
+          variables.set("weight_per_pcs_before", weight_per_unit);
+          variables.set("deadline_system", deadline_system);
+          await taskService.complete(task, variables);
+        } catch (error) {
+          if (error.response) {
+            console.error(
+              "❌ Gagal memproses task:",
+              error.response.status,
+              error.response.data
+            );
+          } else {
+            console.error("❌ Gagal memproses task:", error.message);
+          }
+        }
+      }
+    );
+
+    client.subscribe(
+      "Konfigurasi_Product",
+      async ({ task, taskService }) => {
+        console.log("🚀 Task Konfigurasi Product:", task.id);
+
+        try {
+          const inventree = axios.create({
+            baseURL: `${process.env.SERVER_INVENTREE}/api`,
+            headers: {
+              Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+            },
+            timeout: 10000,
+          });
+
+          const part_id = task.variables.get("part_id");
+          const weight_per_pcs = task.variables.get("weight_per_pcs");
+          const nett_weight_per_pcs = task.variables.get("nett_weight_per_pcs")
+          const gross_weight_per_pcs = task.variables.get("gross_weight_per_pcs")
+          const weight_type = task.variables.get("weight_type");
+          const product_tolerance_percent = task.variables.get("product_tolerance_percent");
+          const threshold_per_item = task.variables.get("threshold_per_item");
+          const manual_count = task.variables.get("manual_count");
+          const manual_count_wholesale = task.variables.get("manual_count_wholesale");
+
+          console.log("📝 Konfigurasi yang akan diupdate:");
+          console.log(`  - Part ID: ${part_id}`);
+          console.log(`  - Weight per pcs: ${weight_per_pcs}`);
+          console.log(`  - Gross Weight per pcs: ${gross_weight_per_pcs}`);
+          console.log(`  - Nett Weight per pcs: ${nett_weight_per_pcs}`);
+          console.log(`  - Weight type: ${weight_type}`);
+          console.log(`  - Tolerance: ${product_tolerance_percent}`);
+          console.log(`  - Threshold: ${threshold_per_item}`);
+
+          // helper upsert parameter
+          const upsertParameter = async (part_pk, template, value) => {
+            try {
+              const exist = await inventree.get(
+                `/part/parameter/?part=${part_pk}&template=${template}`
+              );
+              console.log(`Cek parameter template ${template}:`, JSON.stringify(exist.data, null, 2));
+
+              if (
+                exist.data &&
+                exist.data.results &&
+                exist.data.results.length > 0
+              ) {
+                const paramId = exist.data.results[0].pk;
+                await inventree.patch(`/part/parameter/${paramId}/`, {
+                  data: value,
+                });
+                console.log(
+                  `♻️ Update parameter ${paramId} (template=${template}) = ${value} OK`
+                );
+              } else {
+                await inventree.post("/part/parameter/", {
+                  part: part_pk,
+                  template,
+                  data: value,
+                });
+                console.log(`✅ Insert parameter (template=${template}) = ${value} OK`);
+              }
+            } catch (err) {
+              console.error(
+                `❌ Gagal upsert parameter (template=${template}):`,
+                err.message
+              );
+              if (err.response?.data) {
+                console.error("Response data:", err.response.data);
+              }
+              throw err;
+            }
+          };
+
+          // Update 3 parameter konfigurasi product
+          if (gross_weight_per_pcs != null) {
+            await upsertParameter(part_id, 9, String(gross_weight_per_pcs));
+          } else if (nett_weight_per_pcs != null) {
+            await upsertParameter(part_id, 9, String(nett_weight_per_pcs));
+          }
+          await upsertParameter(part_id, 10, String(product_tolerance_percent));
+          await upsertParameter(part_id, 11, String(threshold_per_item));
+          await upsertParameter(part_id, 12, String(weight_type));
+          await upsertParameter(part_id, 13, String(manual_count));
+          if (gross_weight_per_pcs != null) {
+            await upsertParameter(part_id, 15, String(gross_weight_per_pcs));
+          } else if (nett_weight_per_pcs != null) {
+            await upsertParameter(part_id, 16, String(nett_weight_per_pcs));
+          }
+          await upsertParameter(part_id, 17, String(manual_count_wholesale));
+
+          await taskService.complete(task);
+          console.log("✅ Task Konfigurasi Product Selesai:", task.id);
+        } catch (err) {
+          console.error("❌ Error Konfigurasi Product:", err.message);
+          if (err.response?.data) {
+            console.error("Response data:", err.response.data);
+          }
+
+          await taskService.handleFailure(task, {
+            errorMessage: err.message,
+            errorDetails: err.stack,
+            retries: 0,
+            retryTimeout: 1000,
+          });
+        }
+      }
+    );
+
+    client.subscribe(
+      "Konfigurasi_Product_System",
+      async ({ task, taskService }) => {
+        console.log("🚀 Task Konfigurasi Product:", task.id);
+
+        try {
+          /* ======================================================
+           * InvenTree Client
+           * ====================================================== */
+          const inventree = axios.create({
+            baseURL: `${process.env.SERVER_INVENTREE}/api`,
+            headers: {
+              Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+            },
+            timeout: 10000,
+          });
+
+          /* ======================================================
+           * GraphQL (configureQuery)
+           * ====================================================== */
+          const res = await configureQuery(fastify, {
+            graph: {
+              method: "query",
+              endpoint: process.env.GRAPHQL_API,
+              gqlQuery: `
+            query MyQuery($proc_inst_id: [String!]) {
+              vw_mirorim_inventory_product_configuation(
+                where: { proc_inst_id: { _in: $proc_inst_id } }
+              ) {
+                part_id
+
+                vw_mirorim_inventory_product_configuation_to_vw_part_parameter_configuration {
+                  manual_count
+                  manual_count_wholesale
+                  product_tolerance
+                  threshold_per_item
+                  weight_type
+                  nett_weight
+                  gros_weight
+                }
+
+                vw_mirorim_inventory_product_configuation_to_vw_report_product_configure {
+                  rata_rata_berat_pcs
+                  tolerance
+                }
+              }
+            }
+          `,
+              variables: {
+                proc_inst_id: [task.processInstanceId],
+              },
+            },
+            query: [],
+          });
+
+          const cfg =
+            res?.data?.[0]?.graph
+              ?.vw_mirorim_inventory_product_configuation?.[0];
+
+          if (!cfg) {
+            throw new Error("Data konfigurasi product tidak ditemukan");
+          }
+
+          /* ======================================================
+           * Extract Data
+           * ====================================================== */
+          const part_id = cfg.part_id;
+
+          const paramCfg =
+            cfg
+              .vw_mirorim_inventory_product_configuation_to_vw_part_parameter_configuration?.[0] ||
+            {};
+
+          const reportCfg =
+            cfg
+              .vw_mirorim_inventory_product_configuation_to_vw_report_product_configure?.[0] ||
+            {};
+
+          let {
+            manual_count = 0,
+            manual_count_wholesale = 0,
+            threshold_per_item = 0,
+            weight_type = null,
+            nett_weight = null,
+            gros_weight = null,
+          } = paramCfg;
+
+          const {
+            rata_rata_berat_pcs = 0,
+            tolerance = 0,
+          } = reportCfg;
+
+          let weight_per_pcs = rata_rata_berat_pcs;
+          let gross_weight_per_pcs = gros_weight;
+          let nett_weight_per_pcs = nett_weight;
+
+          const upsertParameter = async (partId, templateId, value) => {
+            const exist = await inventree.get(
+              `/part/parameter/?part=${partId}&template=${templateId}`
+            );
+
+            if (exist.data?.results?.length) {
+              const paramId = exist.data.results[0].pk;
+              await inventree.patch(`/part/parameter/${paramId}/`, {
+                data: value,
+              });
+              console.log(`♻️ Update template=${templateId}`, value);
+            } else {
+              await inventree.post("/part/parameter/", {
+                part: partId,
+                template: templateId,
+                data: value,
+              });
+              console.log(`✅ Insert template=${templateId}`, value);
+            }
+          };
+
+          if (tolerance !== 0 && weight_per_pcs !== 0) {
+            if (weight_per_pcs > 2) {
+              weight_type = "gross";
+              gross_weight_per_pcs = weight_per_pcs;
+              nett_weight_per_pcs = null;
+            } else {
+              weight_type = "net";
+              nett_weight_per_pcs = weight_per_pcs;
+              gross_weight_per_pcs = null;
+            }
+
+            const finalTolerance = tolerance > 3 ? 3 : tolerance;
+
+            await upsertParameter(
+              part_id,
+              9,
+              String(weight_per_pcs)
+            );
+
+            await upsertParameter(
+              part_id,
+              10,
+              String(finalTolerance)
+            );
+
+            await upsertParameter(
+              part_id,
+              11,
+              String(threshold_per_item)
+            );
+
+            await upsertParameter(
+              part_id,
+              12,
+              String(weight_type)
+            );
+
+            await upsertParameter(
+              part_id,
+              13,
+              String(false)
+            );
+
+            if (gross_weight_per_pcs != null) {
+              await upsertParameter(
+                part_id,
+                15,
+                String(gross_weight_per_pcs)
+              );
+            }
+
+            if (nett_weight_per_pcs != null) {
+              await upsertParameter(
+                part_id,
+                16,
+                String(nett_weight_per_pcs)
+              );
+            }
+
+            await upsertParameter(
+              part_id,
+              17,
+              String(false)
+            );
+          } else {
+            console.log("⚠️ Skip konfigurasi: tolerance / berat = 0");
+          }
+          const variables = new Variables();
+          if (tolerance !== 0 && weight_per_pcs === 0) {
+            variables.set("business_key", business_key);
+            variables.set("weight_per_pcs", weight_per_pcs);
+            variables.set("nett_weight_per_pcs", nett_weight_per_pcs);
+            variables.set("gross_weight_per_pcs", gross_weight_per_pcs);
+            variables.set("manual_count", String(false));
+            variables.set("manual_count_wholesale", String(false));
+            variables.set("weight_type", weight_type);
+          } else {
+            variables.set("business_key", "Konfigurasi Product Selesai");
+          }
+          await taskService.complete(task);
+          console.log("✅ Task Konfigurasi Product Selesai:", task.id);
+        } catch (err) {
+          console.error("❌ Error Konfigurasi Product:", err.message);
+
+          await taskService.handleFailure(task, {
+            errorMessage: err.message,
+            errorDetails: err.stack,
+            retries: 0,
+            retryTimeout: 1000,
+          });
+        }
+      }
+    );
   }
 );
