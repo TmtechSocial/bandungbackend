@@ -29,12 +29,12 @@ const eventHandlers = {
     );
 
     console.log("Calling InvenTree API:", {
-  url: `${INVENTREE_API_URL}/api/stock/`,
-  params: {
-    location: item.location_id,
-    part: item.part_id,
-  }
-});
+      url: `${INVENTREE_API_URL}/api/stock/`,
+      params: {
+        location: item.location_id,
+        part: item.part_id,
+      }
+    });
 
     const stockItems = inventreeResponse.data?.results || [];
     const quantity_system = stockItems.reduce(
@@ -43,6 +43,19 @@ const eventHandlers = {
     );
     console.log("quantity system", quantity_system);
     
+    const hasilparse = {
+  ...item,
+  loop_upload: Array.isArray(item.loop_upload)
+    ? item.loop_upload.map(prod => ({
+        jenis_berat: prod.jenis_berat,
+        quantity: prod.quantity,
+        file_name: Array.isArray(prod.file) && prod.file.length > 0
+          ? prod.file[0].name
+          : null
+      }))
+    : []
+};
+
 
         const dataCamunda = {
           type: "complete",
@@ -55,6 +68,15 @@ const eventHandlers = {
                 type: "String",
               },
               quantity_system: { value: quantity_system, type: "String" },
+              Input_Quantity_Stock_Opname_Json: {
+            value: JSON.stringify([hasilparse]),
+            type: "Object",
+            valueInfo: {
+              objectTypeName: "java.util.ArrayList",
+              serializationDataFormat: "application/json",
+            },
+          },
+              tolerance_valid: { value: item.tolerance_valid, type: "Boolean" }
             },
           },
         };
@@ -72,8 +94,8 @@ const eventHandlers = {
               method: "mutate",
               endpoint: GRAPHQL_API,
               gqlQuery: `
-                mutation InsertStockOpnameLogs($proc_inst_id: String!, $quantity_input: numeric!, $task_def_key: String!, $status: String!, $user: String!, $created_at: timestamp!, $evidence: String!, $quantity_data: numeric!) {
-                insert_stock_opname_logs(objects: {proc_inst_id: $proc_inst_id, quantity_input: $quantity_input, task_def_key: $task_def_key, user: $user, created_at: $created_at, evidence: $evidence, quantity_data: $quantity_data}) {
+                mutation InsertStockOpnameLogs($proc_inst_id: String!, $quantity_input: numeric!, $task_def_key: String!, $status: String!, $user: String!, $created_at: timestamp!, $quantity_data: numeric!) {
+                insert_stock_opname_logs(objects: {proc_inst_id: $proc_inst_id, quantity_input: $quantity_input, task_def_key: $task_def_key, user: $user, created_at: $created_at, quantity_data: $quantity_data}) {
                   affected_rows
                 }
                 update_stock_opname(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {status: $status}) {
@@ -85,18 +107,17 @@ const eventHandlers = {
                 proc_inst_id: item.proc_inst_id,
                 quantity_input: item.quantity_counted,
                 user: item.user,
-                status: item.quantity_counted === quantity_system ? "Finish" : "Recount",
+                status: item.quantity_counted === quantity_system ? "Finish" : "Needs Review",
                 task_def_key: "Mirorim_Stock.Stock_Opname.Input_Quantity",
                 created_at: new Date(
                   new Date().getTime() + 7 * 60 * 60 * 1000
                 ).toISOString(),
-                evidence: item.evidence[0] || "",
                 quantity_data: quantity_system || 0,
               },
             },
             query: [],
           };
-
+          
           const responseQuery = await configureQuery(fastify, dataQuery);
 
           results.push({

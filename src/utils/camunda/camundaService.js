@@ -3729,49 +3729,69 @@ import("camunda-external-task-client-js").then(
       }
     );
 
-    client.subscribe("Count_Stock", async function ({ task, taskService }) {
-      console.log("🚀 Task Dijalankan:", task.id);
+        client.subscribe("Count_Stock", async function ({ task, taskService }) {
+  console.log("🚀 Task Dijalankan:", task.id);
 
-      const inventree = axios.create({
-        baseURL: `${process.env.SERVER_INVENTREE}/api`,
-        headers: {
-          Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        timeout: 10000,
-      });
+  const inventree = axios.create({
+    baseURL: `${process.env.SERVER_INVENTREE}/api`,
+    headers: {
+      Authorization: `Token ${process.env.INVENTREE_API_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    timeout: 10000,
+  });
 
-      try {
-        const stock_item_id = task.variables.get("stock_item_id");
-        const quantity_count = task.variables.get("quantity_count");
-        const notes = task.variables.get("notes");
-        const proc_inst_id = task.processInstanceId;
+  try {
+    let data_stock = task.variables.get("data_stock");
+    const selisih = task.variables.get("selisih");
+    const notes = task.variables.get("notes");
+    const proc_inst_id = task.processInstanceId;
 
-        const payload = {
-          items: [
-            {
-              pk: stock_item_id,
-              quantity: quantity_count,
-            },
-          ],
-          notes: `Adjustment Stock Opname | Proc ID: ${proc_inst_id} | ${notes}`,
-        };
+    // 🔹 SORT DARI QUANTITY TERKECIL
+    data_stock.sort((a, b) => a.quantity - b.quantity);
 
-        const response = await inventree.post("stock/count/", payload);
-        console.log("📊 Response InvenTree:", response.data);
+    let remaining = Math.abs(selisih);
 
-        await taskService.complete(task);
-        console.log("✅ Task Selesai:", task.id);
-      } catch (error) {
-        console.error("❌ Error:", error.message);
-        await taskService.handleFailure(task, {
-          errorMessage: error.message,
-          errorDetails: error.stack || "No stack trace",
-          retries: 0,
-          retryTimeout: 1000,
-        });
+    for (const item of data_stock) {
+      if (remaining <= 0) break;
+
+      let newQty = item.quantity;
+
+      if (remaining >= item.quantity) {
+        remaining -= item.quantity;
+        newQty = 0;
+      } else {
+        newQty = item.quantity - remaining;
+        remaining = 0;
       }
+
+      const payload = {
+        items: [
+          {
+            pk: item.pk,
+            quantity: newQty,
+          },
+        ],
+        notes: `Adjustment Stock Opname | Proc ID: ${proc_inst_id} | ${notes}`,
+      };
+
+      const response = await inventree.post("stock/count/", payload);
+      console.log(`📦 Item ${item.pk} → ${item.quantity} → ${newQty}`);
+    }
+
+    await taskService.complete(task);
+    console.log("✅ Task Selesai:", task.id);
+
+  } catch (error) {
+    console.error("❌ Error:", error.message);
+    await taskService.handleFailure(task, {
+      errorMessage: error.message,
+      errorDetails: error.stack || "No stack trace",
+      retries: 0,
+      retryTimeout: 1000,
     });
+  }
+});
 
     client.subscribe("transferStockMutasi", async ({ task, taskService }) => {
       console.log("🚀 Task Transfer Stock Mutasi Dijalankan:", task.id);
