@@ -2,6 +2,7 @@ const { CmisSession } = require("cmis");
 const CMIS_SECRET_URL = process.env.CMIS_SECRET_URL;
 require("dotenv").config();
 const axios = require("axios");
+const sharp = require("sharp");
 
 async function cmisConfigList(fastify, headers) {
   const decodedAuth = Buffer.from(headers, "base64").toString("utf-8");
@@ -88,9 +89,26 @@ async function cmisConfigUpload(fastify, file) {
     
     for await (const data of file) {
       // console.log("data", data);
-      const fileBuffer = await data.toBuffer();
-      // console.log("fileBuffer", fileBuffer);
+      let fileBuffer = await data.toBuffer();
       const fileName = data.filename;
+      const mimeType = data.mimetype;
+      
+      // Kompresi gambar jika file adalah image dengan kualitas 60%
+      if (mimeType && mimeType.startsWith('image/')) {
+        try {
+          console.log(`Mengkompresi gambar: ${fileName}`);
+          fileBuffer = await sharp(fileBuffer)
+            .jpeg({ quality: 60 }) // Kompresi 60%
+            .png({ quality: 60 })   // Untuk PNG juga
+            .toBuffer();
+          console.log(`Gambar ${fileName} berhasil dikompres`);
+        } catch (compressError) {
+          console.log(`Gagal mengkompresi ${fileName}, menggunakan file asli:`, compressError.message);
+          // Jika gagal kompresi, tetap gunakan buffer asli
+        }
+      }
+      
+      // console.log("fileBuffer", fileBuffer);
       // console.log("fileName", fileName);
 
       // Membentuk form data untuk upload
