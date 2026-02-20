@@ -1,9 +1,5 @@
 const axios = require("axios");
 
-// Use CAMUNDA_API_URL env var as base for REST calls
-const camundaUrl =
-  process.env.CAMUNDA_API || "http://localhost:8080/engine-rest/";
-
 /**
  * Fetch user groups from Camunda REST API
  * @param {string} userId - The user ID to fetch groups for
@@ -14,17 +10,20 @@ module.exports.fetchUserGroups = async (userId) => {
 
   try {
     // Camunda REST: GET /group?member=<userId>
-    const url = `${camundaUrl}engine-rest/group?member=${userId}`;
-    const resp = await axios.get(url, { timeout: 10000 });
+    // Using axios with baseURL for consistency with other camunda utils
+    const resp = await axios.get(`/engine-rest/group?member=${userId}`, {
+      baseURL: process.env.CAMUNDA_API || "http://localhost:8080",
+      timeout: 10000,
+    });
 
     // console.log("📥 Camunda REST API response:", resp);
 
     const groups = Array.isArray(resp.data)
       ? resp.data.map((g) => ({
-          id: g.id,
-          name: g.name || g.id,
-          type: g.type || "",
-        }))
+        id: g.id,
+        name: g.name || g.id,
+        type: g.type || "",
+      }))
       : [];
 
     // console.log(`✅ Found ${groups.length} groups for user ${userId} via REST`);

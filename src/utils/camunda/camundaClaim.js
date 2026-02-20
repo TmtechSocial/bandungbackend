@@ -3,6 +3,7 @@ const CAMUNDA_API = process.env.CAMUNDA_API;
 const { fetchAllTasks } = require("./camundaTask");
 const { broadcastTaskEvent } = require("../websocket/websocketServer");
 const { checkTaskMultiClaim } = require("./processDefinition");
+const { fetchUserGroups } = require("./camundaUserGroups");
 
 async function getTaskByInstanceAndKey(instance, taskDefinitionKey) {
   const response = await axios.get(
@@ -41,11 +42,31 @@ async function checkUserExistingTasks(userId, taskDefinitionKey) {
   }
 }
 
+// Helper to determine if a user can multi-claim for a specific task type
+async function isUserMultiClaimCapable(userId, taskDefinitionKey) {
+  const isMultiClaimFromTask = await checkTaskMultiClaim(taskDefinitionKey);
+
+  // Check if user has MultiClaim group (Hardcoded exception)
+  let hasMultiClaimGroup = false;
+  try {
+    const userGroups = await fetchUserGroups(userId);
+    hasMultiClaimGroup = userGroups.some(g => g.id === 'MultiClaim' || g.name === 'MultiClaim');
+  } catch (error) {
+    console.error(`❌ Error fetching user groups for multi-claim check (User: ${userId}):`, error.message);
+  }
+
+  const result = isMultiClaimFromTask || hasMultiClaimGroup;
+  if (hasMultiClaimGroup) {
+    console.log(`🚀 Multi-claim enabled for ${userId} via 'MultiClaim' group membership`);
+  }
+  return result;
+}
+
 async function claimTask(request, reply, websocketManager) {
   const { instance, taskDefinitionKey, userId } = request.body;
-  
+
   console.log("📝 Claim request received:", { instance, taskDefinitionKey, userId });
-  
+
   if (!instance || !taskDefinitionKey || !userId) {
     return reply.status(400).send({
       error: "Missing required fields: instance, taskDefinitionKey, userId",
@@ -55,7 +76,7 @@ async function claimTask(request, reply, websocketManager) {
   try {
     const task = await getTaskByInstanceAndKey(instance, taskDefinitionKey);
     console.log("📋 Task found for claiming:", { id: task.id, name: task.name, assignee: task.assignee });
-    
+
     // Check if task is already claimed by someone else
     if (task.assignee && task.assignee !== userId) {
       console.log("⚠️ Task already claimed by another user:", task.assignee);
@@ -64,7 +85,7 @@ async function claimTask(request, reply, websocketManager) {
         currentAssignee: task.assignee
       });
     }
-    
+
     // Check if task is already claimed by the same user
     if (task.assignee === userId) {
       console.log("⚠️ Task already claimed by the requesting user:", userId);
@@ -74,18 +95,18 @@ async function claimTask(request, reply, websocketManager) {
       });
     }
 
-    // NEW: Check multi-claim settings and existing tasks
-    const isMultiClaim = await checkTaskMultiClaim(taskDefinitionKey);
-    console.log(`🔍 Multi-claim enabled for ${taskDefinitionKey}: ${isMultiClaim}`);
+    // NEW: Check multi-claim settings and user groups
+    const isMultiClaim = await isUserMultiClaimCapable(userId, taskDefinitionKey);
+    console.log(`🔍 Multi-claim check for ${userId} & ${taskDefinitionKey} result: ${isMultiClaim}`);
 
     if (!isMultiClaim) {
       // For non-multi-claim tasks, check if user already has ANY task with same taskDefinitionKey
       const existingTasks = await checkUserExistingTasks(userId, taskDefinitionKey);
-      
+
       if (existingTasks.length > 0) {
         console.log(`⚠️ User ${userId} already has ${existingTasks.length} task(s) with taskDefinitionKey: ${taskDefinitionKey}`);
         const existingTaskInstances = existingTasks.map(t => t.processInstanceId).join(', ');
-        
+
         return reply.status(409).send({
           error: `You cannot claim this task. This task type (${taskDefinitionKey}) does not support multi-claim and you already have claimed task(s) in instance(s): ${existingTaskInstances}`,
           currentAssignee: task.assignee,
@@ -98,7 +119,7 @@ async function claimTask(request, reply, websocketManager) {
         });
       }
     }
-    
+
     const response = await axios.post(
       `/engine-rest/task/${task.id}/claim`,
       { userId },
@@ -150,9 +171,9 @@ async function claimTask(request, reply, websocketManager) {
 
 async function unclaimTask(request, reply, websocketManager) {
   const { instance, taskDefinitionKey, userId } = request.body;
-  
+
   console.log("📝 Unclaim request received:", { instance, taskDefinitionKey, userId });
-  
+
   if (!instance || !taskDefinitionKey || !userId) {
     return reply.status(400).send({
       error: "Missing required fields: instance, taskDefinitionKey, userId",
@@ -162,7 +183,7 @@ async function unclaimTask(request, reply, websocketManager) {
   try {
     const task = await getTaskByInstanceAndKey(instance, taskDefinitionKey);
     console.log("📋 Task found for unclaiming:", { id: task.id, name: task.name, assignee: task.assignee });
-    
+
     if (!task.assignee) {
       return reply
         .status(400)
@@ -176,7 +197,7 @@ async function unclaimTask(request, reply, websocketManager) {
     }
 
     // Get multi-claim status for response
-    const isMultiClaim = await checkTaskMultiClaim(taskDefinitionKey);
+    const isMultiClaim = await isUserMultiClaimCapable(userId, taskDefinitionKey);
 
     const response = await axios.post(
       `/engine-rest/task/${task.id}/unclaim`,
