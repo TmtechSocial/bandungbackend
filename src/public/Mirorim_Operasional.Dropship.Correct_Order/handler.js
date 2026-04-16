@@ -17,6 +17,8 @@ const eventHandlers = {
           variables: {
             variables: {
               // tambahkan variable jika diperlukan
+              invoice: { value: item.invoice, type: "String" },
+
             },
           },
         };

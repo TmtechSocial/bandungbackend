@@ -15,16 +15,19 @@ const eventHandlers = {
     for (const item of data) {
       try {
         const instanceId = item.proc_inst_id || null;
-
-        const evidence = JSON.stringify(item.evidence) ||  [];
-
+        console.log("Id", item.id);
+        item.loop_upload.forEach((x) => {
+          console.log("location_id", x.location_id);
+          console.log("quantity", x.quantity_placement);
+          console.log("file", x.file);
+        });
         const dataCamunda = {
           type: "complete",
           endpoint: `/engine-rest/task/{taskId}/complete`,
           instance: item.proc_inst_id,
           variables: {
             variables: {
-              evidence_placement_inbound_retail: { value: evidence, type: "String" },
+              // evidence_placement_inbound_wholesale: { value: evidence, type: "String" },
             },
           },
         };
@@ -34,8 +37,8 @@ const eventHandlers = {
           instanceId,
           process
         );
-
-        if (responseCamunda.status === 200 || responseCamunda.status === 204) {
+        // if (instanceId) {
+          if (responseCamunda.status === 200 || responseCamunda.status === 204) {
           const inventree = axios.create({
             baseURL: `${SERVER_INVENTREE}/api`,
             headers: {
@@ -46,64 +49,113 @@ const eventHandlers = {
           });
 
           const { data: stockItems } = await inventree.get(
-            `/stock/?location=${INVENTREE_LOCATION_WIP_REJECT}&part=${item.part_pk}&status=65`
+            `/stock/?location=${INVENTREE_LOCATION_WIP_REJECT}&part=${item.part_pk}&status=65&ordering=-updated&limit=1`
           );
 
           const stockItemId = stockItems.results.length > 0 ? stockItems.results[0].pk : null;
 
           const dataQuery = [];
 
-          // --- Loop untuk existing products ---
-          for (const product of item.products) {
+          let totalQty = 0;
+
+          for (const product of item.loop_upload) {
+
             const quantity = product.quantity_placement;
             const locationId = product.location_id;
+            const placementId = item.id;
+            const evidence = product.file?.[0]?.name || null;
+
+            totalQty += quantity;
+
             const notes = `Transfer Inbound Reject | Proc ID: ${item.proc_inst_id}`;
-            // 🔄 Transfer Stock Item di Inventree
-            
+
             const stockTransfer = await transferStock(
-            stockItemId,
-            quantity,
-            locationId,
-            notes
-          );
+              stockItemId,
+              quantity,
+              locationId,
+              notes
+            );
 
             console.log("stock Transfer", stockTransfer);
 
+            // INSERT mi_distributed
             dataQuery.push({
               graph: {
                 method: "mutate",
                 endpoint: GRAPHQL_API,
-                gqlQuery: `mutation MyMutation(
-  $updated_at: timestamp!, 
-  $updated_by: String!, 
-  $id: Int!, 
-  $quantity: Int!
-) {
-  update_mi_placement(
-    where: {id: {_eq: $id}}, 
-    _set: {
-      quantity_placement: $quantity, 
-      updated_at: $updated_at, 
-      updated_by: $updated_by
-    }
-  ) {
-    affected_rows
-  }
-}
-`,
-                variables: {
-                  updated_at: item.updated_at,
-                  updated_by: item.updated_by,
-                  id: product.id,
-                  quantity: product.quantity_placement,
-                },
-              },
-              query: [],
-            });
+                gqlQuery: `
+      mutation InsertDistributed(
+        $placement_id: Int!,
+        $location_id: Int!,
+        $quantity: Int!,
+        $evidence: String,
+     $created_at: timestamp!,
+        $created_by: String!
+      ) {
+        insert_mi_distributed(
+          objects: {
+            placement_id: $placement_id,
+            location_id: $location_id,
+            quantity_distribute: $quantity,
+            evidence: $evidence,
+            created_at: $created_at,
+            created_by: $created_by
           }
-          console.log("dataQuery", JSON.stringify(dataQuery, null, 2));
+        ) {
+          affected_rows
+        }
+      }
+      `,
+                variables: {
+                  placement_id: placementId,
+                  location_id: locationId,
+                  quantity: quantity,
+                  evidence: evidence,
+                  created_at: item.updated_at,
+                  created_by: item.updated_by
+                }
+              },
+              query: []
+            });
 
-          // Jalankan semua query secara paralel
+          }
+
+          // UPDATE mi_placement (TOTAL)
+          dataQuery.push({
+            graph: {
+              method: "mutate",
+              endpoint: GRAPHQL_API,
+              gqlQuery: `
+    mutation UpdatePlacement(
+      $updated_at: timestamp!,
+      $updated_by: String!,
+      $id: Int!,
+      $quantity: Int!
+    ) {
+      update_mi_placement(
+        where: {id: {_eq: $id}},
+        _set: {
+          quantity_placement: $quantity,
+          updated_at: $updated_at,
+          updated_by: $updated_by
+        }
+      ) {
+        affected_rows
+      }
+    }
+    `,
+              variables: {
+                updated_at: item.updated_at,
+                updated_by: item.updated_by,
+                id: item.id,
+                quantity: totalQty
+              }
+            },
+            query: []
+          });
+
+
+          // EXECUTE
           const responseQuery = await Promise.all(
             dataQuery.map((query) => configureQuery(fastify, query))
           );

@@ -17,33 +17,43 @@ const eventHandlers = {
         ).padStart(2, "0")}-${String(now.getFullYear()).slice(2)}`;
         const uniqueTrxRetail = `IR|${dateCode}|${item.invoice}|${item.part_pk}`;
         const uniqueTrxWholesale = `IW|${dateCode}|${item.invoice}|${item.part_pk}`;
+        const uniqueTrxWholesaleD7 = `IW7|${dateCode}|${item.invoice}|${item.part_pk}`;
         const uniqueTrxReject = `IRJ|${dateCode}|${item.invoice}|${item.part_pk}`;
 
-        console.log("productssssss", uniqueTrxRetail, uniqueTrxWholesale, uniqueTrxReject);
+        console.log("productssssss", uniqueTrxRetail, uniqueTrxWholesale, uniqueTrxWholesaleD7, uniqueTrxReject);
+        console.log("Cek data", item.products);
+
 
         const hasWholesale = item.products.some(
           (group) =>
             group.type_location === "Wholesale" &&
-            group.products.some((prod) => prod.quantity > 0)
+            group.quantity_distribute > 0
+        );
+
+        const hasWholesaleD7 = item.products.some(
+          (group) =>
+            group.type_location === "WHOLESALED7" &&
+            group.quantity_distribute > 0
         );
 
         const hasReject = item.products.some(
           (group) =>
             group.type_location === "Reject" &&
-            group.products.some((prod) => prod.quantity > 0)
+            group.quantity_distribute > 0
         );
 
         const hasRetail = item.products.some(
           (group) =>
             group.type_location === "Retail" &&
-            group.products.some((prod) => prod.quantity > 0)
+            group.quantity_distribute > 0
         );
 
         console.log("hasWholesale", hasWholesale);
+        console.log("hasWholesaleD7", hasWholesaleD7);
         console.log("hasRetail", hasRetail);
         console.log("hasReject", hasReject);
 
-        // // ✅ buat payload Camunda
+        // // // ✅ buat payload Camunda
         const dataCamunda = {
           type: "complete",
           endpoint: `/engine-rest/task/{taskId}/complete`,
@@ -51,10 +61,12 @@ const eventHandlers = {
           variables: {
             variables: {
               whole: { value: hasWholesale, type: "Boolean" },
+              wholeD7: { value: hasWholesaleD7, type: "Boolean" },
               retail: { value: hasRetail, type: "Boolean" },
               reject: { value: hasReject, type: "Boolean" },
               uniqueTrxInboundRetail: { value: uniqueTrxRetail, type: "String" },
               uniqueTrxInboundWholesale: { value: uniqueTrxWholesale, type: "String" },
+              uniqueTrxInboundWholesaleD7: { value: uniqueTrxWholesaleD7, type: "String" },
               uniqueTrxInboundReject: { value: uniqueTrxReject, type: "String" },
             },
           },
@@ -65,64 +77,71 @@ const eventHandlers = {
           instanceId,
           process
         );
-        if (responseCamunda.status === 200 || responseCamunda.status === 204) {
+
+        // if (item.proc_inst_id) {
+          if (responseCamunda.status === 200 || responseCamunda.status === 204) {
           const responseQuery = [];
-          for (const productGroup of item.products) {
-            const { type_location, products } = productGroup;
+          for (const productGroup of item.products.filter(p => p.quantity_distribute > 0)) {
 
-            for (const product of products) {
-              const finalLocationId =
-                product.available === true
-                  ? product.location_available
-                  : product.location_id;
+            const { type_location, quantity_distribute } = productGroup;
 
-              const dataQueryProduct = {
-                graph: {
-                  method: "mutate",
-                  endpoint: GRAPHQL_API,
-                  gqlQuery: `mutation MyMutation($created_at: timestamp!, $created_by: String!, $type: String!, $location_id: Int, $quantity_inbound: Int, $id: Int!, $unique_trx: String!) {
-  insert_mi_placement(objects: {created_at: $created_at, created_by: $created_by, updated_at: $created_at, updated_by: $created_by, type: $type, location_id: $location_id, quantity_inbound: $quantity_inbound, inbound_product_id: $id, unique_trx: $unique_trx}) {
-    affected_rows
-  }
-}`,
-                  variables: {
-                    created_at: item.created_at,
-                    created_by: item.created_by,
-                    id: item.id,
-                    type: type_location,
-                    type: type_location,
-                    unique_trx:
-                      type_location === "Retail"
-                        ? uniqueTrxRetail
-                        : type_location === "Wholesale"
+            const dataQueryProduct = {
+              graph: {
+                method: "mutate",
+                endpoint: GRAPHQL_API,
+                gqlQuery: `mutation MyMutation($created_at: timestamp!, $created_by: String!, $type: String!, $location_id: Int, $quantity_inbound: Int, $id: Int!, $unique_trx: String!) {
+        insert_mi_placement(objects: {
+          created_at: $created_at,
+          created_by: $created_by,
+          updated_at: $created_at,
+          updated_by: $created_by,
+          type: $type,
+          location_id: $location_id,
+          quantity_inbound: $quantity_inbound,
+          inbound_product_id: $id,
+          unique_trx: $unique_trx
+        }) {
+          affected_rows
+        }
+      }`,
+                variables: {
+                  created_at: item.created_at,
+                  created_by: item.created_by,
+                  id: item.id,
+                  type: type_location,
+
+                  unique_trx:
+                    type_location === "Retail"
+                      ? uniqueTrxRetail
+                      : type_location === "Wholesale"
                         ? uniqueTrxWholesale
                         : type_location === "Reject"
-                        ? uniqueTrxReject
-                        : null,
-                    location_id:
-                      finalLocationId === "" ? null : finalLocationId,
-                    quantity_inbound: product.quantity || 0,
-                  },
+                          ? uniqueTrxReject
+                          : type_location === "WHOLESALED7"
+                            ? uniqueTrxWholesaleD7
+                            : null,
+
+                  location_id: 0,
+                  quantity_inbound: quantity_distribute || 0,
                 },
-                query: [],
-              };
+              },
+              query: [],
+            };
 
-              try {
-                const resProduct = await configureQuery(
-                  fastify,
-                  dataQueryProduct
-                );
-                responseQuery.push(resProduct);
+            try {
+              const resProduct = await configureQuery(fastify, dataQueryProduct);
+              responseQuery.push(resProduct);
 
-                console.log(JSON.stringify(dataQueryProduct, null, 2));
-              } catch (err) {
-                console.error(
-                  `❌ Error saat insert mi_placement (type: ${type_location}, location: ${product.location_id}):`,
-                  err
-                );
-                throw err;
-              }
+              console.log("Insert Placement:", JSON.stringify(dataQueryProduct, null, 2));
+
+            } catch (err) {
+              console.error(
+                `❌ Error saat insert mi_placement (type: ${type_location})`,
+                err
+              );
+              throw err;
             }
+
           }
           results.push({
             message: "Create event processed successfully",

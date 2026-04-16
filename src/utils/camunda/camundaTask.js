@@ -1,14 +1,15 @@
 const { Pool } = require("pg");
 const dayjs = require("dayjs");
 const { getTasksWithMultiClaimInfo } = require("./processDefinition");
+const { fetchUserGroups } = require("./camundaUserGroups");
 
 // Database configuration - Use Pool instead of Client
 const pool = new Pool({
   user: process.env.DB_USER,
-  password: '1234',
+  password: "Mamat.01",
   host: process.env.DB_HOST,
-  database: 'camunda',
-  port: 5432,
+  database: "camunda",
+  port: 5434,
   max: 20, // Maximum number of clients in the pool
   idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
   connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection could not be established
@@ -24,7 +25,6 @@ pool.on("error", (err) => {
   process.exit(-1);
 });
 
-console.log("Database pool initialized successfully");
 // Modified query to handle business key with timestamps correctly
 const getTasksQuery = `
   WITH task_variables AS (
@@ -54,7 +54,7 @@ SELECT DISTINCT
     t.task_def_key_ as task_definition_key,
     t.name_ as name,
     t.assignee_ as assignee,
-    t.create_time_ as created,
+    pi.start_time_ as created,
     split_part(e.business_key_, ':', 1) as business_key1,
     split_part(e.business_key_, ':', 2) as business_key2,
     substring(e.business_key_ from '^[^:]+:[^:]+:(.*)$') as business_key3,
@@ -67,10 +67,13 @@ LEFT JOIN public.act_ru_execution e
     ON t.proc_inst_id_ = e.proc_inst_id_ AND e.parent_id_ IS NULL
 LEFT JOIN identitylink_grouped ig 
     ON ig.task_id_ = t.id_
+LEFT JOIN act_hi_procinst pi
+    ON t.proc_inst_id_ = pi.proc_inst_id_
 WHERE (
     t.task_def_key_ LIKE '%Mirorim%' 
     OR t.task_def_key_ LIKE '%HR_Management.Absensi_New%'
     OR t.task_def_key_ LIKE '%HR_Management.User_Delegation%'
+    OR t.task_def_key_ LIKE '%HR_Management.Asesmen_360%'
 )
 AND (
     t.assignee_ = $1
@@ -78,7 +81,7 @@ AND (
         t.id_ IN (
             SELECT tid.task_id_ 
             FROM act_ru_identitylink tid 
-            WHERE (tid.group_id_ = $2 OR tid.user_id_ = $1)
+            WHERE (tid.group_id_ = ANY($2::text[]) OR tid.user_id_ = $1)
         )
         AND (t.assignee_ IS NULL OR t.assignee_ = '')
     )
@@ -148,29 +151,48 @@ module.exports.fetchAllTasks = async (
   returnRaw = false,
   wsBroadcaster = null
 ) => {
-  console.log("Fetching tasks for initiatorId:", initiatorId, "group:", group);
+  // console.log("Fetching tasks for initiatorId:", initiatorId, "group:", group);
+
+  let groupIds = [];
+  try {
+    const groups = await fetchUserGroups(initiatorId);
+    if (Array.isArray(groups) && groups.length > 0) {
+      groupIds = groups.map((g) => g.id);
+    } else {
+      // console.log(`No Camunda groups found for user ${initiatorId}; using empty group list`);
+      groupIds = [];
+    }
+  } catch (err) {
+    console.error(
+      `Error fetching groups for ${initiatorId}:`,
+      err.message || err
+    );
+    // Fallback to empty array so query still runs but won't match any group_id_
+    groupIds = [];
+  }
 
   // Use pool.query directly - no need for manual connection management
   try {
     const { rows: tasks } = await pool.query(getTasksQuery, [
       initiatorId,
-      group || "",
+      groupIds,
     ]);
-    console.log(`Fetched ${tasks.length} tasks from database`);
+    // console.log(`Fetched ${tasks.length} tasks from database`);
 
     const processedTasks = tasks.map(processTask);
-    console.log(`Processed ${processedTasks.length} tasks`);
+    // console.log(`Processed ${processedTasks.length} tasks`);
 
     // Add multi-claim information to tasks
-    // console.log("🔍 Adding multi-claim information to tasks...");
+    // console.log("ðŸ” Adding multi-claim information to tasks...");
     const tasksWithMultiClaim = await getTasksWithMultiClaimInfo(
       processedTasks
     );
     // console.log(
-    //   `✅ Added multi-claim info to ${tasksWithMultiClaim.length} tasks`
+    //   `âœ… Added multi-claim info to ${tasksWithMultiClaim.length} tasks`
     // );
 
     const groupedTasks = groupTasksByKey(tasksWithMultiClaim);
+    // console.log("🟠 groupedTasks", groupedTasks);
 
     // If wsBroadcaster is provided, broadcast task updates to all clients
     if (wsBroadcaster && typeof wsBroadcaster === "function") {
@@ -200,6 +222,7 @@ module.exports.fetchAllTasks = async (
     }
 
     if (returnRaw) {
+      // console.log("💕", returnRaw);
       return tasksWithMultiClaim;
     }
 
@@ -215,13 +238,31 @@ module.exports.fetchAllTasks = async (
 // Add a new method to force a refresh without throttling
 module.exports.forceRefreshTasks = async (
   initiatorId,
-  group,
   wsBroadcaster = null
 ) => {
   try {
+    let groupIds = [];
+    try {
+      const groups = await fetchUserGroups(initiatorId);
+      if (Array.isArray(groups) && groups.length > 0) {
+        groupIds = groups.map((g) => g.id);
+      } else {
+        console.log(
+          `No Camunda groups found for user ${initiatorId}; using empty group list`
+        );
+        groupIds = [];
+      }
+    } catch (err) {
+      console.error(
+        `Error fetching groups for ${initiatorId}:`,
+        err.message || err
+      );
+      groupIds = [];
+    }
+
     const { rows: tasks } = await pool.query(getTasksQuery, [
       initiatorId,
-      group || "mirorim",
+      groupIds,
     ]);
     const processedTasks = tasks.map(processTask);
 
@@ -262,4 +303,3 @@ module.exports.closePool = async () => {
     console.error("Error closing database pool:", err);
   }
 };
-

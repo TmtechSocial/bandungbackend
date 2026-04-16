@@ -17,6 +17,7 @@ const eventHandlers = {
           instance: item.proc_inst_id,
           variables: {
             variables: {
+              picked: { value: item.picked, type: "String" },
             },
           },
         };
@@ -24,26 +25,29 @@ const eventHandlers = {
         const responseCamunda = await camundaConfig(dataCamunda, instanceId, process);
         console.log("responseCamunda", responseCamunda);
         if (responseCamunda.status === 200 || responseCamunda.status === 204) {
-          // const instanceId = responseCamunda.data.processInstanceId;
-          const dataQuery = {
-            graph: {
-              method: "mutate",
-              endpoint: GRAPHQL_API,
-              gqlQuery: `mutation MyMutation($proc_inst_id: String!, $date: timestamp!) { update_mo_order(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {canceled_at: $date}) { affected_rows }}`,  
-              variables: {
-                proc_inst_id: item.proc_inst_id,
-                date: item.canceled_at,          
+          const status_pick = item.picked
+          if (status_pick == "yet"){
+            // const instanceId = responseCamunda.data.processInstanceId;
+            const dataQuery = {
+              graph: {
+                method: "mutate",
+                endpoint: GRAPHQL_API,
+                gqlQuery: `mutation MyMutation($proc_inst_id: String!, $date: timestamp!) { update_mo_order(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {canceled_at: $date}) { affected_rows }}`,  
+                variables: {
+                  proc_inst_id: item.proc_inst_id,
+                  date: item.canceled_at,          
+                },
               },
-            },
-            query: [],
-          };
-
-          const responseQuery = await configureQuery(fastify, dataQuery);
+              query: [],
+            };
+  
+            const responseQuery = await configureQuery(fastify, dataQuery);
+          }
 
           results.push({
             message: "Create event processed successfully",
             camunda: responseCamunda.data,
-            database: responseQuery.data,
+            // database: responseQuery.data,
           });
         }
       } catch (error) {

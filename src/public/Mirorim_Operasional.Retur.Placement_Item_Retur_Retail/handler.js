@@ -83,36 +83,7 @@ const eventHandlers = {
                   "/stock/transfer/",
                   transferPayload
                 );
-                console.log("✅ Stock transfer success:", stockTransfer);
-
-                // --- Ambil stok di lokasi tujuan ---
-                const { data: stockItems } = await inventree.get(
-                  `/stock/?location=${product.location_id}&part=${product.part_pk}`
-                );
-
-                const stockPKs =
-                  stockItems?.results
-                    ?.map((stock) => stock.pk)
-                    .filter(Boolean) || [];
-
-                if (stockPKs.length > 0) {
-                  const mergePayload = {
-                    items: stockPKs.map((pk) => ({ item: pk })),
-                    location: product.location_id,
-                    notes: `Merge stok Retail Retur | Proc inst ID: ${item.proc_inst_id}`,
-                  };
-
-                  console.log(
-                    "📦 mergePayload:",
-                    JSON.stringify(mergePayload, null, 2)
-                  );
-
-                  await inventree.post(`/stock/merge/`, mergePayload);
-                } else {
-                  console.warn(
-                    `⚠️ Tidak ada stok ditemukan untuk merge di lokasi ${product.location_id} part ${product.part_pk}`
-                  );
-                }
+                console.log("? Stock transfer success:", stockTransfer);
               }
 
               // --- Tambahkan GraphQL Mutation ---
@@ -131,7 +102,7 @@ const eventHandlers = {
                     }
                   `,
                   variables: {
-                    id: Number(product.id),
+                    id: Number(product.id_retur),
                     quantity: Number(product.quantity_placement),
                     evidence: item.evidence[0] || "",
                   },
@@ -140,7 +111,7 @@ const eventHandlers = {
               });
             } catch (productError) {
               console.error(
-                `❌ Error memproses produk ${product.part_pk}:`,
+                `? Error memproses produk ${product.part_pk}:`,
                 productError.response?.data || productError.message
               );
             }
@@ -152,16 +123,16 @@ const eventHandlers = {
           );
 
           results.push({
-            message: "✅ Event processed successfully",
+            message: "? Event processed successfully",
             camunda: responseCamunda.data,
             database: responseQuery.map((r) => r.data),
           });
         } else {
-          console.warn(`⚠️ Camunda response status: ${responseCamunda.status}`);
+          console.warn(`?? Camunda response status: ${responseCamunda.status}`);
         }
       } catch (error) {
         console.error(
-          `❌ Error executing handler for event: ${eventKey}`,
+          `? Error executing handler for event: ${eventKey}`,
           error
         );
         results.push({ error: error.message, instanceId });
@@ -172,7 +143,7 @@ const eventHandlers = {
   },
 
   async onChange(data) {
-    console.log("⚙️ Handling onChange with data:", data);
+    console.log("?? Handling onChange with data:", data);
     return { message: "onChange executed", data };
   },
 };
@@ -180,7 +151,7 @@ const eventHandlers = {
 // --- Main handler ---
 const handle = async (eventData) => {
   const { eventKey, data, process } = eventData;
-  console.log("📦 Received eventData:", eventData);
+  console.log("?? Received eventData:", eventData);
 
   if (!eventHandlers[eventKey]) {
     throw new Error(`No handler found for event: ${eventKey}`);
@@ -189,7 +160,7 @@ const handle = async (eventData) => {
   try {
     return await eventHandlers[eventKey](data, process, eventKey);
   } catch (error) {
-    console.error(`❌ Error executing handler for event: ${eventKey}`, error);
+    console.error(`? Error executing handler for event: ${eventKey}`, error);
     throw error;
   }
 };

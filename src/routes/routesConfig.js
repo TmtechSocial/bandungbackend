@@ -26,7 +26,10 @@ const fs = require("fs");
 const dynamicChange = require("../utils/onChange/handleChange");
 const dynamicClick = require("../utils/onClick/handleClick");
 const { broadcastTaskEvent } = require("../utils/websocket/websocketServer");
-const { sendNotificationToUserGroup, sendNotificationToGroup } = require("../utils/firebase/groupNotificationSender");
+const {
+  sendNotificationToUserGroup,
+  sendNotificationToGroup,
+} = require("../utils/firebase/groupNotificationSender");
 
 // Optimization: Add performance monitoring
 const performanceMonitor = {
@@ -74,52 +77,53 @@ async function broadcastToClients(message) {
 
       // Auto-fill taskName if missing
       if (
-        (typeof message.taskName === "undefined" || message.taskName === null) &&
+        (typeof message.taskName === "undefined" ||
+          message.taskName === null) &&
         firstTask.name
       ) {
         message.taskName = firstTask.name;
       }
 
-    // Auto-fill processInstanceId if missing
-    if (
-      (typeof message.processInstanceId === "undefined" ||
-        message.processInstanceId === null) &&
-      firstTask.processInstanceId
-    ) {
-      message.processInstanceId = firstTask.processInstanceId;
+      // Auto-fill processInstanceId if missing
+      if (
+        (typeof message.processInstanceId === "undefined" ||
+          message.processInstanceId === null) &&
+        firstTask.processInstanceId
+      ) {
+        message.processInstanceId = firstTask.processInstanceId;
+      }
+
+      // Auto-fill taskDefinitionKey if missing
+      if (
+        (typeof message.taskDefinitionKey === "undefined" ||
+          message.taskDefinitionKey === null) &&
+        firstTask.taskDefinitionKey
+      ) {
+        message.taskDefinitionKey = firstTask.taskDefinitionKey;
+      }
+
+      // Auto-fill taskId if missing
+      if (
+        (typeof message.taskId === "undefined" || message.taskId === null) &&
+        firstTask.id
+      ) {
+        message.taskId = firstTask.id;
+      }
     }
 
-    // Auto-fill taskDefinitionKey if missing
-    if (
-      (typeof message.taskDefinitionKey === "undefined" ||
-        message.taskDefinitionKey === null) &&
-      firstTask.taskDefinitionKey
-    ) {
-      message.taskDefinitionKey = firstTask.taskDefinitionKey;
+    // Set defaults for required fields if still missing
+    if (!message.processInstanceId) {
+      message.processInstanceId = "unknown";
+    }
+    if (!message.taskDefinitionKey) {
+      message.taskDefinitionKey = "unknown";
+    }
+    if (!message.taskName) {
+      message.taskName = "Unknown Task";
     }
 
-    // Auto-fill taskId if missing
-    if (
-      (typeof message.taskId === "undefined" || message.taskId === null) &&
-      firstTask.id
-    ) {
-      message.taskId = firstTask.id;
-    }
-  }
-
-  // Set defaults for required fields if still missing
-  if (!message.processInstanceId) {
-    message.processInstanceId = "unknown";
-  }
-  if (!message.taskDefinitionKey) {
-    message.taskDefinitionKey = "unknown";
-  }
-  if (!message.taskName) {
-    message.taskName = "Unknown Task";
-  }
-
-  // console.log("📡 Broadcasting message via WebSocket:", message);
-  broadcastTaskEvent(message);
+    // console.log("ðŸ“¡ Broadcasting message via WebSocket:", message);
+    broadcastTaskEvent(message);
   } catch (error) {
     console.error("Failed to broadcast via WebSocket:", error);
   }
@@ -135,7 +139,8 @@ async function protectedRoutes(fastify, options) {
     }
   });
 
-  fastify.get("/dynamicConfigure",
+  fastify.get(
+    "/dynamicConfigure",
     // { preHandler: [fastify.authenticate] },
     async (request, reply) => {
       const { process } = request.query;
@@ -156,7 +161,8 @@ async function protectedRoutes(fastify, options) {
     }
   );
 
-  fastify.post("/dynamicQuery",
+  fastify.post(
+    "/dynamicQuery",
     // { preHandler: [fastify.authenticate] },
     async (request, reply) => {
       try {
@@ -175,7 +181,8 @@ async function protectedRoutes(fastify, options) {
     }
   );
 
-  fastify.post("/dynamicRender",
+  fastify.post(
+    "/dynamicRender",
     // { preHandler: [fastify.authenticate] },
     async (request, reply) => {
       const startTime = Date.now();
@@ -255,11 +262,13 @@ async function protectedRoutes(fastify, options) {
   // WebSocket stats endpoint
   fastify.get("/api/websocket/stats", async (request, reply) => {
     try {
-      const { getConnectedClients } = require("../utils/websocket/websocketServer");
+      const {
+        getConnectedClients,
+      } = require("../utils/websocket/websocketServer");
       const connectedClients = getConnectedClients();
       reply.status(200).send({
         connectedClients: connectedClients.length,
-        clients: connectedClients
+        clients: connectedClients,
       });
     } catch (error) {
       reply.status(500).send({ message: error.message });
@@ -343,7 +352,8 @@ async function protectedRoutes(fastify, options) {
     }
   });
 
-  fastify.post("/dynamicSubmit",
+  fastify.post(
+    "/dynamicSubmit",
     // { preHandler: [fastify.authenticate] },
     async (request, reply) => {
       const { process } = request.query;
@@ -441,7 +451,7 @@ async function protectedRoutes(fastify, options) {
   fastify.post("/dynamicClick", async (request, reply) => {
     const { process } = request.query;
     const { eventKey, event, session } = request.body;
-    console.log("request body", request.body);
+    // console.log("request body", request.body);
 
     try {
       const response = await dynamicClick(fastify, process, event, session);
@@ -634,63 +644,97 @@ async function protectedRoutes(fastify, options) {
       }
     }
   );
-
+  // New endpoint: Get user groups from Camunda
   fastify.get(
-      "/api/task",
-      //{ preHandler: [fastify.authenticate] },
-      async (request, reply) => {
-        const { initiator, group } = request.query;
-        if (!initiator && !group) {
-          return reply
-            .status(400)
-            .send({ message: "initiator parameter is required" });
-        }
-  
-        try {
-          // Pass the broadcastToClients function to fetchAllTasks with WebSocket manager
-          const websocketManager = fastify.websocketManager;
-          const result = await fetchAllTasks(
-            initiator,
-            group,
-            false,
-            (message) => broadcastToClients(message, websocketManager)
-          );
-          return result;
-        } catch (err) {
-          request.log.error(err);
-          throw new Error("Failed to fetch tasks");
-        }
-      }
-    );
+    "/api/camunda/user/:userId/groups",
+    //{ preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { userId } = request.params;
 
-  fastify.post("/api/task", async (request, reply) => {
-      const { status } = request.body;
-  
-      if (status === undefined) {
+      // console.log("📡 API called: /api/camunda/user/:userId/groups");
+      // console.log("👤 Requested userId:", userId);
+
+      if (!userId) {
         return reply
           .status(400)
-          .send({ message: "Status (0 or 1) is required." });
+          .send({ message: "userId parameter is required" });
       }
-  
+
       try {
+        const groups = await fetchUserGroups(userId);
+
+        // console.log(
+        //  `✅ Successfully fetched ${groups.length} groups for user ${userId}`
+        //);
+
+        return reply.status(200).send({
+          groups: groups,
+          count: groups.length,
+          userId: userId,
+        });
+      } catch (err) {
+        console.error("❌ Error in /api/camunda/user/:userId/groups:", err);
+        request.log.error(err);
+        return reply.status(500).send({
+          message: "Failed to fetch user groups",
+          error: err.message,
+        });
+      }
+    }
+  );
+  fastify.get(
+    "/api/task",
+    //{ preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { initiator } = request.query;
+      if (!initiator) {
+        return reply
+          .status(400)
+          .send({ message: "initiator parameter is required" });
+      }
+
+      try {
+        // Pass the broadcastToClients function to fetchAllTasks with WebSocket manager
         const websocketManager = fastify.websocketManager;
-        
-        if (status === 1) {
-          return await claimTask(request, reply, websocketManager);
-        } else if (status === 0) {
-          return await unclaimTask(request, reply, websocketManager);
-        } else {
-          return reply
-            .status(400)
-            .send({ message: "Invalid status value. Use 0 or 1." });
-        }
+        const result = await fetchAllTasks(initiator, null, false, (message) =>
+          broadcastToClients(message, websocketManager)
+        );
+        return result;
       } catch (err) {
         request.log.error(err);
-        return reply
-          .status(500)
-          .send({ message: "Unexpected error", detail: err.message });
+        throw new Error("Failed to fetch tasks");
       }
-    });
+    }
+  );
+
+  fastify.post("/api/task", async (request, reply) => {
+    const { status } = request.body;
+
+    if (status === undefined) {
+      return reply
+        .status(400)
+        .send({ message: "Status (0 or 1) is required." });
+    }
+
+    try {
+      const websocketManager = fastify.websocketManager;
+
+      if (status === 1) {
+        return await claimTask(request, reply, websocketManager);
+      } else if (status === 0) {
+        return await unclaimTask(request, reply, websocketManager);
+      } else {
+        return reply
+          .status(400)
+          .send({ message: "Invalid status value. Use 0 or 1." });
+      }
+    } catch (err) {
+      request.log.error(err);
+      return reply
+        .status(500)
+        .send({ message: "Unexpected error", detail: err.message });
+    }
+  });
 
   fastify.get("/get-image/:gambar", async (request, reply) => {
     try {
@@ -704,10 +748,9 @@ async function protectedRoutes(fastify, options) {
 
       // Tentukan path gambar dengan nama file yang sudah di-decode
       const filePath = path.join(
-        __dirname,
-        "../../../../../servertest",
-        decodedGambar
-      );
+  "/media/mirorim02/2ee9c72d-2d45-492f-a58a-82e1212aedbb/server-doc-hdd",
+  decodedGambar
+);
 
       // Periksa apakah file ada
       if (!fs.existsSync(filePath)) {
@@ -755,14 +798,14 @@ async function protectedRoutes(fastify, options) {
       if (!userId) {
         return reply.status(400).send({
           success: false,
-          message: "userId is required"
+          message: "userId is required",
         });
       }
 
       if (!notification || !notification.title || !notification.body) {
         return reply.status(400).send({
           success: false,
-          message: "notification object with title and body is required"
+          message: "notification object with title and body is required",
         });
       }
 
@@ -778,13 +821,12 @@ async function protectedRoutes(fastify, options) {
       } else {
         return reply.status(500).send(result);
       }
-
     } catch (error) {
       console.error("Error in /api/notification/send-to-group:", error);
       return reply.status(500).send({
         success: false,
         message: "Internal server error",
-        error: error.message
+        error: error.message,
       });
     }
   });
@@ -797,14 +839,14 @@ async function protectedRoutes(fastify, options) {
       if (!userGroups) {
         return reply.status(400).send({
           success: false,
-          message: "userGroups is required"
+          message: "userGroups is required",
         });
       }
 
       if (!notification || !notification.title || !notification.body) {
         return reply.status(400).send({
           success: false,
-          message: "notification object with title and body is required"
+          message: "notification object with title and body is required",
         });
       }
 
@@ -818,15 +860,14 @@ async function protectedRoutes(fastify, options) {
       if (result.success) {
         return reply.status(200).send(result);
       } else {
-        return reply.status(500).send(result);
+        return reply.status(200).send(result);
       }
-
     } catch (error) {
       console.error("Error in /api/notification/send-to-group:", error);
       return reply.status(500).send({
         success: false,
         message: "Internal server error",
-        error: error.message
+        error: error.message,
       });
     }
   });

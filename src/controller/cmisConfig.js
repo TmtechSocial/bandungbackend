@@ -93,19 +93,61 @@ async function cmisConfigUpload(fastify, file) {
       const fileName = data.filename;
       const mimeType = data.mimetype;
       
-      // Kompresi gambar jika file adalah image dengan kualitas 60%
-      if (mimeType && mimeType.startsWith('image/')) {
+      // Hanya kompres file gambar (image/*) jika ukurannya > 100KB
+      if (mimeType && mimeType.startsWith('image/') && fileBuffer.length > 100000) {
         try {
-          console.log(`Mengkompresi gambar: ${fileName}`);
-          fileBuffer = await sharp(fileBuffer)
-            .jpeg({ quality: 60 }) // Kompresi 60%
-            .png({ quality: 60 })   // Untuk PNG juga
-            .toBuffer();
-          console.log(`Gambar ${fileName} berhasil dikompres`);
+          console.log(`🖼️ Mengkompresi gambar: ${fileName} (${mimeType}) - Size: ${(fileBuffer.length/1024).toFixed(2)}KB`);
+          
+          const sharpInstance = sharp(fileBuffer);
+          
+          // Resize jika gambar terlalu besar (max width 1920px untuk performa)
+          const metadata = await sharpInstance.metadata();
+          if (metadata.width > 1920) {
+            sharpInstance.resize(1920, null, { 
+              withoutEnlargement: true,
+              fastShrinkOnLoad: true 
+            });
+          }
+          
+          // Kompresi berdasarkan format asli
+          if (mimeType.includes('jpeg') || mimeType.includes('jpg')) {
+            fileBuffer = await sharpInstance
+              .jpeg({ 
+                quality: 60, 
+                progressive: true,
+                mozjpeg: true 
+              })
+              .toBuffer();
+          } else if (mimeType.includes('png')) {
+            fileBuffer = await sharpInstance
+              .png({ 
+                quality: 60,
+                compressionLevel: 9,
+                progressive: true
+              })
+              .toBuffer();
+          } else if (mimeType.includes('webp')) {
+            fileBuffer = await sharpInstance
+              .webp({ quality: 60 })
+              .toBuffer();
+          } else {
+            // Untuk format lain, convert ke JPEG untuk ukuran lebih kecil
+            fileBuffer = await sharpInstance
+              .jpeg({ quality: 60, progressive: true })
+              .toBuffer();
+          }
+          
+          const newSize = (fileBuffer.length/1024).toFixed(2);
+          console.log(`✅ Gambar ${fileName} dikompres: ${metadata.width}x${metadata.height} - New size: ${newSize}KB`);
         } catch (compressError) {
-          console.log(`Gagal mengkompresi ${fileName}, menggunakan file asli:`, compressError.message);
+          console.log(`⚠️ Gagal mengkompresi ${fileName}, menggunakan file asli:`, compressError.message);
           // Jika gagal kompresi, tetap gunakan buffer asli
         }
+      } else if (mimeType && mimeType.startsWith('image/')) {
+        console.log(`⚡ Gambar ${fileName} sudah kecil (${(fileBuffer.length/1024).toFixed(2)}KB), skip compression`);
+      } else {
+        // File bukan gambar - tidak perlu kompresi
+        console.log(`📄 File ${fileName} (${mimeType || 'unknown'}) - ${(fileBuffer.length/1024).toFixed(2)}KB - No compression needed`);
       }
       
       // console.log("fileBuffer", fileBuffer);

@@ -49,6 +49,7 @@ const eventHandlers = {
             variables: {
               type: { value: "Stock Opname Manual", type: "string" },
               location_id: { value: item.location_id, type: "Integer" },
+              part_id: { value: item.part_id, type: "Integer" },
               ownership: { value: description, type: "string" },
             },
             businessKey: `${part_name}:Stock Opname Manual:${item.created_at}`,

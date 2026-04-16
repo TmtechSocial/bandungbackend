@@ -18,6 +18,14 @@ const eventHandlers = {
           variables: {
             variables: {
               banding: { value: item.banding, type: "string" },
+	      hasil_banding_cukup: {
+                value: item.hasil_banding_cukup,
+                type: "string",
+              },
+              input_dana : {
+                value: item.input_dana || 0,
+                type: "integer",
+              },
               date_banding: { value: item.date_banding || "PT1S", type: "string" },
             },
           },

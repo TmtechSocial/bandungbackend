@@ -128,7 +128,24 @@ const eventHandlers = {
               product.destination_location_name,
               item.created_at
             );
-
+            const checkStockInventree = {
+              graph: {
+                method: "query",
+                endpoint: GRAPHQL_API,
+                gqlQuery: `
+                  query MyQuery($part_id: Int!) {
+                    vw_check_stock_inventree(where: {part_id: {_eq: $part_id}}) {
+                      kondisi
+                    }
+                  }
+                `,
+                variables: { part_id: part_id },
+              },
+              query: [],
+            };
+            const checkStockInventreeResult = await configureQuery(fastify, checkStockInventree);
+            // console.log("checkStockInventreeResult:", JSON.stringify(checkStockInventreeResult.data, null, 2));
+            const kondisi = checkStockInventreeResult?.data?.[0]?.graph?.vw_check_stock_inventree?.[0]?.kondisi || "Unknown";
             // 🔹 Kirim ke Camunda
             const dataCamunda = {
               type: "start",
@@ -143,6 +160,9 @@ const eventHandlers = {
                   destination_stock: { value: product.destination_sku, type: "Integer" },
                   unique_trx: { value: unique_id, type: "String" },
                   business_key: { value: unique_id, type: "String" },
+                  urgensi: { value: item.urgensi, type: "String" },
+                  validator : { value: kondisi, type: "String" },
+
                 },
               },
             };

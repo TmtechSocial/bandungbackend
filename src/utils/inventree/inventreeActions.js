@@ -2,7 +2,7 @@ const axios = require("axios");
 
 const INVENTREE_API = process.env.SERVER_INVENTREE;
 const INVENTREE_API_TOKEN = process.env.INVENTREE_API_TOKEN;
-
+const GRAPHQL_REST = process.env.GRAPHQL_REST;
 const inventree = axios.create({
   baseURL: `${INVENTREE_API}/api`,
   headers: {
@@ -108,9 +108,11 @@ async function transferStock(stockpk, quantity, destination, notes = "") {
         },
       ],
       notes,
-      location: destination,
+      location: destination, // Lokasi tujuan
     };
+
     console.log("📦 transfer Stock payload:", JSON.stringify(payload, null, 2));
+
     const res = await inventree.post("/stock/transfer/", payload);
     console.log("✅ transfer Stock response:", res.data);
     return res.data;
@@ -118,7 +120,7 @@ async function transferStock(stockpk, quantity, destination, notes = "") {
     const status = err.response?.status;
     const items = err.response?.data?.items;
     console.error(`❌ transferStock Error: status=${status}, items=`, items);
-    throw { status, items };
+    throw { status, items }; // lempar error sederhana
   }
 }
 
@@ -136,10 +138,12 @@ async function mergeStock(partId, destLocationPk, notes = "") {
       ?.map((stock) => stock.pk)
       .filter(Boolean);
 
-    // 2️⃣ Kalau gak ada stok, warning dan stop
-    if (!stockPKs?.length) {
+    const stockCount = stockPKs?.length || 0;
+
+    // ✅ LOGIC BARU:
+    if (stockCount <= 1) {
       console.log(
-        `⚠️ Tidak ada stok ditemukan untuk merge di lokasi ${destLocationPk} part ${partId}`
+        `ℹ️ Skip merge: jumlah stok hanya ${stockCount} (lokasi ${destLocationPk}, part ${partId})`
       );
       return null;
     }
@@ -197,12 +201,33 @@ async function getDescStock(partId, destLocationPk) {
   try {
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    const { data: stockItems } = await inventree.get(
-      `/stock/?location=${destLocationPk}&part=${partId}&ordering=-updated&limit=1`
+    const { data } = await axios.get(
+      `${GRAPHQL_REST}/stock_stockitemdesc?location_id=${destLocationPk}&part_id=${partId}`
     );
 
-    const stockPKs = stockItems?.results[0]?.pk || null;
+    const stockPKs = data?.stock_stockitem?.[0]?.id || null;
+
     return stockPKs;
+  } catch (err) {
+    const status = err.response?.status;
+    const items = err.response?.data?.items;
+    console.error(`❌ mergeStock Error: status=${status}, items=`, items);
+    throw { status, items };
+  }
+}
+
+async function getAllStock(partId, destLocationPk) {
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    const { data: stockItems } = await inventree.get(
+      `/stock/?location=${destLocationPk}&part=${partId}&status=10&limit=1000`
+    );
+
+    const result = stockItems || null;
+    // console.log(`result: ${JSON.stringify(result)}`);
+    
+    return result;
   } catch (err) {
     const status = err.response?.status;
     const items = err.response?.data?.items;
@@ -234,10 +259,11 @@ async function createStockTransferEqual(partId, quantity, sourceId) {
   } catch (err) {
     const status = err.response?.status;
     const items = err.response?.data?.items;
+
     console.error(
       `❌ createStockTransferEqual Error: status=${status}, items=`,
       items
-    );  
+    );
     throw { status, items };
   }
 }
@@ -251,4 +277,6 @@ module.exports = {
   trackStock,
   getDescStock,
   createStockTransferEqual,
+  getAllStock
 };
+

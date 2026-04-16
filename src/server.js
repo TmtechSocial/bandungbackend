@@ -93,8 +93,8 @@ require("./utils/camunda/camundaService");
 // Start server
 const start = async () => {
   try {
-    const server = await fastify.listen({ port: 5000, host: "0.0.0.0" });
-    fastify.log.info(`Server berjalan di http://localhost:5000`);
+    const server = await fastify.listen({ port: 8010, host: "0.0.0.0" });
+    fastify.log.info(`Server berjalan di http://localhost:8010`);
 
     // Initialize WebSocket server
     const httpServer = fastify.server;
@@ -107,3 +107,4 @@ const start = async () => {
 };
 
 start();
+

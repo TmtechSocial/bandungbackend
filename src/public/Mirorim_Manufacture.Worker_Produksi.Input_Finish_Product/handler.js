@@ -18,6 +18,7 @@ const eventHandlers = {
           variables: {
             variables: {
               build_order: { value: item.reference, type: "String" },
+              kategori_reject: { value: item.notes_reject || "", type: "String" },
             },
           },
         };

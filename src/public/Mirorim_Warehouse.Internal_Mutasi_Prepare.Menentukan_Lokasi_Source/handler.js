@@ -25,6 +25,7 @@ const eventHandlers = {
       try {
         let destinationTypeTable = "Unknown";
         let sourceTypeTable = "Unknown";
+        let action = item.action;
         // --- 1. Cek stok tiap produk ---
         for (const product of item.products) {
           try {
@@ -112,7 +113,7 @@ const eventHandlers = {
           item.products?.[0]?.location_id || "UNKNOWN";
         const unique_id = `IM/${createdDate}/${locationDestinationName}`;
         const firstProduct = item.products[0];
-        const source_stock_item = firstProduct?.source_sku || "UNKNOWN";
+        const source_stock_item = firstProduct?.source_sku || 0;
 
         // --- 3. Complete task di Camunda ---
         const dataCamunda = {
@@ -121,6 +122,7 @@ const eventHandlers = {
           instance: item.proc_inst_id,
           variables: {
             variables: {
+              action: { value: action, type: "String" },
               valid: { value: item.valid, type: "boolean" },
               source_type: { value: sourceTypeTable, type: "String"},
               destination_location_name: { value: locationDestinationName, type: "String"},
@@ -131,7 +133,9 @@ const eventHandlers = {
 
         const responseCamunda = await camundaConfig(dataCamunda, item.proc_inst_id, process);
         console.log("✅ Camunda response:", responseCamunda.status);
-
+        if (action ==  "approved"){
+          action = "processed";
+        }
         if (![200, 204].includes(responseCamunda.status)) continue;
 
         // --- 4. Update mutasi_request & details ---
@@ -150,7 +154,7 @@ const eventHandlers = {
               prepare: true,
               quantity: totalQty,
               notes: item.notes || "",
-              status: "processed"
+              status: action,
             },
           },
           query: [],

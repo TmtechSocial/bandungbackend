@@ -9,14 +9,22 @@ const eventHandlers = {
     for (const item of data) {
       try {
         let taskId;
-        let instanceId = item.proc_inst_id || null; 
-
-        const quantityOrders = item.products.map(product => product.quantity_order);
-        const quantityChecks = item.products.map(product => product.quantity_check);
-        
-        console.log("Isi quantity_order:", quantityOrders);
-        console.log("Isi quantity_check:", quantityChecks);
-
+        let instanceId = item.proc_inst_id || null;
+const productsPayload = item.products.map(product => ({
+  sku_toko: product.sku_toko,
+  quantity_order: product.quantity_order,
+  part_pk: product.part_pk,
+  weight_per_pcs: product.weight_per_pcs,
+  product_tolerance: product.product_tolerance,
+  threshold_per_item: product.threshold_per_item,
+  unit_berat: product.unit_berat,
+  tipe_berat: product.tipe_berat,
+  quantity_convert: product.quantity_convert,
+  action: product.action,
+  is_valid_check: product.is_valid_check,
+  quantity_check: product.quantity_check,
+  quantity_convert_result: product.quantity_convert_result,
+}));
 
         const dataCamunda = {
           type: "complete",
@@ -24,75 +32,108 @@ const eventHandlers = {
           instance: item.proc_inst_id,
           variables: {
             variables: {
-              quantity_order: { value: quantityOrders, type: "String" },
-              quantity_check: { value: quantityChecks, type: "String" },
+              all_products_valid: { value: item.all_products_valid, type: "Boolean" },
+              products_payload: { value: JSON.stringify(productsPayload), type: "Object",
+          valueInfo: {
+            serializationDataFormat: "application/json",
+            objectTypeName: "java.util.ArrayList",
+          },
+        }
             },
           },
         };
-        
+
         const responseCamunda = await camundaConfig(dataCamunda, instanceId, process);
         console.log("responseCamunda", responseCamunda);
         if (responseCamunda.status === 200 || responseCamunda.status === 204) {
           let responseQuery;
-          for (const itemData of item.products) {
-            console.log("itemData", itemData.action);
-            if (itemData.action) {
+
+          const nextTask = item.all_products_valid
+              ? "Mirorim_Operasional.Order.Packing"
+              : "Mirorim_Operasional.Order.Wasit";
+
+          for (const product of item.products) {
+              const finalQuantityCheck = product.item_valid === true ? product.quantity_checked : product.quantity_convert_result || 0;
+              console.log("finalQuantityCheck", finalQuantityCheck); // finalQuantityCheck
+
+            if (product.action) {
               responseQuery = await configureQuery(fastify, {
                 graph: {
-              method: "mutate",
-              endpoint: GRAPHQL_API,
-              gqlQuery: `mutation MyMutation($proc_inst_id: String!, $sku_toko: String!, $quantity_check: Int!, $time_stamp_check: timestamp!, $date: timestamp!, $task: String!, $notes: String!, $item_mismatch: Boolean!, $user_checker: String!) { update_mo_order_shop(where: {proc_inst_id: {_eq: $proc_inst_id}, sku_toko: {_eq: $sku_toko}}, _set: {quantity_check: $quantity_check, notes: $notes, item_mismatch: $item_mismatch}) { affected_rows } update_mo_order(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {checked_at: $date, task_def_key: $task, user_checker: $user_checker, time_stamp_check: $time_stamp_check}) { affected_rows } }`,
-              variables: {
-                proc_inst_id: instanceId,
-                date: item.checked_at,
-                sku_toko: itemData.sku_toko,
-		quantity_check: itemData.quantity_check ?? 0,
-                item_mismatch: itemData.action,
-                notes: itemData.notes,
-                user_checker: item.user_checker,
-                time_stamp_check: item.time_stamp_check,
-                task: item.products.some(itemData => itemData.quantity_order !== itemData.quantity_check)
-  ? "Mirorim_Operasional.Order.Wasit"
-  : "Mirorim_Operasional.Order.Packing"
+                  method: "mutate",
+                  endpoint: GRAPHQL_API,
+                  gqlQuery: `mutation MyMutation($proc_inst_id: String!, $sku_toko: String!, $quantity_check: Int, $time_stamp_check: timestamp!, $date: timestamp!, $task: String!, $notes: String!, $item_mismatch: Boolean!, $item_valid: Boolean!, $user_checker: String!, $input_type: String!) {
+                              update_mo_order_shop(where: {proc_inst_id: {_eq: $proc_inst_id}, sku_toko: {_eq: $sku_toko}}, _set: {quantity_check: $quantity_check, notes: $notes, item_mismatch: $item_mismatch, item_valid: $item_valid, input_type: $input_type}) {
+                                affected_rows
+                              }
+                              update_mo_order(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {checked_at: $date, task_def_key: $task, user_checker: $user_checker, time_stamp_check: $time_stamp_check}) {
+                                affected_rows
+                              }
+                            }
+`,
+                  variables: {
+                    proc_inst_id: instanceId,
+                    date: item.checked_at,
+                    sku_toko: product.sku_toko,
+                    quantity_check: finalQuantityCheck,
+                    item_mismatch: product.action,
+                    item_valid: product.is_valid_check,
+                    notes: product.notes,
+                    user_checker: item.user_checker,
+                    input_type: product.unit_berat,
+                    time_stamp_check: item.time_stamp_check,
+                    task: nextTask
+                  }
+                },
+                query: [],
               }
-            },
-            query: [],
-          }
               )
-            }else{
-              responseQuery = await configureQuery(fastify,{
+            } else {
+              responseQuery = await configureQuery(fastify, {
                 graph: {
-              method: "mutate",
-              endpoint: GRAPHQL_API,
-              gqlQuery: `mutation MyMutation($proc_inst_id: String!, $sku_toko: String!, $quantity_check: Int!, $time_stamp_check: timestamp!, $date: timestamp!, $task: String!, $user_checker: String!) { update_mo_order_shop(where: {proc_inst_id: {_eq: $proc_inst_id}, sku_toko: {_eq: $sku_toko}}, _set: {quantity_check: $quantity_check}) { affected_rows } update_mo_order(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {checked_at: $date, task_def_key: $task, user_checker: $user_checker, time_stamp_check: $time_stamp_check}) { affected_rows } }`,
-              variables: {
-                proc_inst_id: instanceId,
-                date: item.checked_at,
-                sku_toko: itemData.sku_toko,
-		quantity_check: itemData.quantity_check ?? 0,
-                user_checker: item.user_checker,
-                time_stamp_check: item.time_stamp_check,
-                task: item.products.some(itemData => itemData.quantity_order !== itemData.quantity_check)
-  ? "Mirorim_Operasional.Order.Wasit"
-  : "Mirorim_Operasional.Order.Packing"
+                  method: "mutate",
+                  endpoint: GRAPHQL_API,
+                  gqlQuery: `mutation MyMutation($proc_inst_id: String!, $sku_toko: String!, $quantity_check: Int, $time_stamp_check: timestamp!, $date: timestamp!, $task: String!, $user_checker: String!, $item_valid: Boolean!, $input_type: String!) {
+                              update_mo_order_shop(where: {proc_inst_id: {_eq: $proc_inst_id}, sku_toko: {_eq: $sku_toko}}, _set: {quantity_check: $quantity_check, item_valid: $item_valid, input_type: $input_type}) {
+                                affected_rows
+                              }
+                              update_mo_order(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {checked_at: $date, task_def_key: $task, user_checker: $user_checker, time_stamp_check: $time_stamp_check}) {
+                                affected_rows
+                              }
+                            }
+`,
+                  variables: {
+                    proc_inst_id: instanceId,
+                    date: item.checked_at,
+                    sku_toko: product.sku_toko,
+                    quantity_check: finalQuantityCheck,
+                    user_checker: item.user_checker,
+                    item_valid: product.is_valid_check,
+                    input_type: product.unit_berat,
+                    time_stamp_check: item.time_stamp_check,
+                    task: nextTask
+                  }
+                },
+                query: [],
               }
-            },
-            query: [],
-          }
               )
+            }
+
+            if (!responseQuery || !responseQuery.data) {
+              throw new Error(`Failed to update database for sku_toko: ${product.sku_toko}`);
             }
           }
 
           results.push({
             message: "Create event processed successfully",
-            camunda: responseCamunda.data,
             database: responseQuery.data,
           });
+        } else {
+          throw new Error(`Camunda task completion failed with status: ${responseCamunda.status}`);
         }
       } catch (error) {
-        console.error(`Error executing handler for event: ${eventKey}`, error);
-        console.log(`graphql error: ${error.dataQuery}`);
-        
+        console.error(`Error executing handler for event onSubmit:`, error);
+        console.log(`graphql error:`, error.dataQuery || error.message);
+
         throw error;
       }
     }

@@ -17,7 +17,7 @@ const eventHandlers = {
       try {
         const instanceId = item.proc_inst_id || null;
 
-        // 🔄 Start Camunda process
+        // ?? Start Camunda process
         const dataCamunda = {
           type: "start",
           endpoint: `/engine-rest/process-definition/key/Mirorim_Warehouse.Trigger_Generic_Staging/start`,
@@ -25,13 +25,14 @@ const eventHandlers = {
             variables: {
               part_id: { value: item.part_id, type: "Integer" },
               unique_trx: { value: item.unique_trx, type: "String" },
+              evidence_delivery_staging: { value: item.evidence[0] || "", type: "String" },
             },
             businessKey: `${item.part_id}:${item.unique_trx}:${item.created_at}`,
           },
         };
 
         const responseCamunda = await camundaConfig(dataCamunda, instanceId);
-        console.log("✅ Camunda response", responseCamunda?.data || responseCamunda);
+        console.log("? Camunda response", responseCamunda?.data || responseCamunda);
 
         if (responseCamunda.status === 200 || responseCamunda.status === 204) {
           const dataQuery = [];
@@ -39,7 +40,7 @@ const eventHandlers = {
           // --- Loop products ---
           for (const product of item.products) {
 
-              // 🔄 GraphQL mutate untuk update_mi_placement
+              // ?? GraphQL mutate untuk update_mi_placement
               dataQuery.push({
                 graph: {
                   method: "mutate",
@@ -68,14 +69,14 @@ const eventHandlers = {
           console.log("responseQuery", JSON.stringify(responseQuery, null, 2));
 
           results.push({
-            message: "✅ Create event processed successfully",
+            message: "? Create event processed successfully",
             camunda: responseCamunda.data,
             database: responseQuery,
           });
         }
       } catch (error) {
         console.error(
-          `❌ Error executing handler for event: ${eventKey}`,
+          `? Error executing handler for event: ${eventKey}`,
           error
         );
       }
@@ -85,26 +86,26 @@ const eventHandlers = {
   },
 
   async onChange(data) {
-    console.log("⚙️ Handling onChange with data:", data);
+    console.log("?? Handling onChange with data:", data);
     return { message: "onChange executed", data };
   },
 };
 
 /**
- * ⛓️ Handler utama
+ * ?? Handler utama
  */
 const handle = async (eventData) => {
   const { eventKey, data } = eventData;
-  console.log("📥 Received eventData", eventData);
+  console.log("?? Received eventData", eventData);
 
   if (!eventHandlers[eventKey]) {
-    throw new Error(`❌ No handler found for event: ${eventKey}`);
+    throw new Error(`? No handler found for event: ${eventKey}`);
   }
 
   try {
     return await eventHandlers[eventKey](data, eventKey);
   } catch (error) {
-    console.error(`❌ Error executing handler for event: ${eventKey}`, error);
+    console.error(`? Error executing handler for event: ${eventKey}`, error);
     throw error;
   }
 };

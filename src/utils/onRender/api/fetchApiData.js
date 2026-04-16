@@ -189,13 +189,27 @@ async function fetchApiData(
     // });
 
     // Optimization: Use optimized axios instance
-    const response = await axiosInstance({
+    const axiosConfig = {
       method,
       url: finalUrl,
       headers,
       params: processedParams,
-      data: processedData,
-    });
+    };
+
+    // ❗ HANYA kirim body jika BUKAN GET																																																																																		
+    if (method.toUpperCase() !== "GET") {
+      axiosConfig.data = processedData;
+    }
+
+    const response = await axiosInstance(axiosConfig);
+
+    // const response = await axiosInstance({
+    //   method,
+    //   url: finalUrl,
+    //   headers,
+    //   params: processedParams,
+    //   data: processedData,
+    // });
 
     // Fleksibilitas dalam mengembalikan data response
     let result;

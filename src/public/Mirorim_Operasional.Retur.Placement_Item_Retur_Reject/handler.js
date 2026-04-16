@@ -169,14 +169,14 @@ const eventHandlers = {
         }
 
         const dataQuery = [];
-        const transferPayloads = []; // ⬅️ Kumpulkan semua transfer payload di sini
+        const transferPayloads = []; // ?? Kumpulkan semua transfer payload di sini
 
         for (const product of item.products || []) {
           try {
             // GraphQL query
             dataQuery.push(buildGraphQuery(product, item));
 
-            // Jika bukan adjustmentRetail → buat payload transfer
+            // Jika bukan adjustmentRetail ? buat payload transfer
             if (!item.adjustmentRetail) {
               const payloads = buildTransferPayload(product, item); // ini array
               if (Array.isArray(payloads) && payloads.length) {
@@ -185,26 +185,26 @@ const eventHandlers = {
             }
           } catch (prodErr) {
             console.error(
-              `❌ Error processing product ${product.product_name}:`,
+              `? Error processing product ${product.product_name}:`,
               prodErr.message || prodErr
             );
           }
         }
 
-        // 2️⃣ Jalankan semua transferPayload satu per satu (SEQUENTIAL)
+        // 2?? Jalankan semua transferPayload satu per satu (SEQUENTIAL)
         for (const [index, payload] of transferPayloads.entries()) {
           console.log(
-            `🚚 [${index + 1}/${transferPayloads.length}] Transfer dimulai...`
+            `?? [${index + 1}/${transferPayloads.length}] Transfer dimulai...`
           );
           const transferResult = await performTransfer(payload);
 
           if (transferResult.success) {
             console.log(
-              `✅ Transfer sukses (${index + 1}/${transferPayloads.length})`
+              `? Transfer sukses (${index + 1}/${transferPayloads.length})`
             );
           } else {
             console.warn(
-              `⚠️ Transfer gagal (${index + 1}/${transferPayloads.length}): ${
+              `?? Transfer gagal (${index + 1}/${transferPayloads.length}): ${
                 transferResult.error
               }`
             );
@@ -220,13 +220,13 @@ const eventHandlers = {
         );
 
         results.push({
-          message: "✅ Event processed successfully",
+          message: "? Event processed successfully",
           camunda: responseCamunda.data,
           database: responseQuery.map((r) => r.data),
         });
       } catch (error) {
         console.error(
-          `❌ Error executing handler for event: ${eventKey}`,
+          `? Error executing handler for event: ${eventKey}`,
           error.message || error
         );
         results.push({ error: error.message || String(error) });
@@ -237,7 +237,7 @@ const eventHandlers = {
   },
 
   async onChange(data) {
-    console.log("⚙️ Handling onChange with data:", data);
+    console.log("?? Handling onChange with data:", data);
     return { message: "onChange executed", data };
   },
 };
@@ -245,7 +245,7 @@ const eventHandlers = {
 // --- Main handler ---
 const handle = async (eventData) => {
   const { eventKey, data, process } = eventData;
-  console.log("📦 Received eventData:", eventData);
+  console.log("?? Received eventData:", eventData);
 
   if (!eventHandlers[eventKey]) {
     throw new Error(`No handler found for event: ${eventKey}`);
@@ -255,7 +255,7 @@ const handle = async (eventData) => {
     return await eventHandlers[eventKey](data, process, eventKey);
   } catch (error) {
     console.error(
-      `❌ Error executing handler for event: ${eventKey}`,
+      `? Error executing handler for event: ${eventKey}`,
       error.message || error
     );
     throw error;

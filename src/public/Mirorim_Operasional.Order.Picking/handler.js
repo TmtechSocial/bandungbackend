@@ -4,37 +4,79 @@ const fastify = require("fastify")();
 const GRAPHQL_API = process.env.GRAPHQL_API;
 const fetch = require("node-fetch");
 const axios = require("axios");
-const { trackStock, removeStock } = require("../../utils/inventree/inventreeActions");
+const { trackStock, removeStock,getAllStock } = require("../../utils/inventree/inventreeActions");
 const { unclaimTask } = require("../../utils/camunda/camundaClaim");
 
 // remove stok
 const removeStockFromInventree = async (product, item) => {
   try {
-    const stockPk = product.stock_pk_sku;
-    const quantity = product.quantity_convert;
+    const locationPk = product.stock_item_id;
+    const part_pk = product.part_pk;
+    const quantityNeeded = product.quantity_convert;
+
     const notes = `Order Invoice ${item.invoice} | SKU: ${product.sku_toko} | User Picker: ${item.user_picker}`;
+    const stockList = await getAllStock(part_pk, locationPk);
 
-    const stockTrack = await trackStock(stockPk, notes);
-    console.log(stockTrack.count);
-
-    // Jika count = 0 → boleh remove
-    if (stockTrack.count === 0) {
-      const stockRemove = await removeStock(stockPk, quantity, notes);
-      return stockRemove;
+    if (!stockList?.results?.length) {
+      throw new Error("Stock kosong atau tidak ditemukan pada location.");
     }
-    
-    console.log("Stock sudah pernah di-track, tidak remove");
-    return null;
+    for (const stock of stockList.results) {
+      // Cek apakah stok sudah pernah di-track
+      const stockTrack = await trackStock(stock.pk, notes);
+      if (stockTrack?.length > 0) {
+        console.log("Stock sudah pernah di-track, tidak remove");
+        return [204];
+      }
+
+      console.log("Stock belum pernah di-track, lanjut remove");
+
+    }
+
+    // Ambil list stock item pada part & location ini
+    // Hitung total qty
+    const totalQty = stockList.results.reduce((sum, s) => sum + s.quantity, 0);
+
+    if (totalQty < quantityNeeded) {
+      console.log(`âŒ Stock tidak cukup. Dibutuhkan ${quantityNeeded}, tersedia ${totalQty}`);
+      return null;
+    }
+
+    console.log(`Total stock tersedia: ${totalQty} â€” Cukup, lanjut pengurangan.`);
+
+    // --- STEP 1: Sort ascending, yang paling kecil dulu ---
+    const sortedStock = [...stockList.results].sort((a, b) => a.quantity - b.quantity);
+
+    let qtyToDeduct = quantityNeeded;
+    const results = [];
+
+    for (const stock of sortedStock) {
+      if (qtyToDeduct <= 0) break;
+
+      const available = stock.quantity;
+      const amountToRemove = Math.min(available, qtyToDeduct);
+
+      console.log(
+        `Mengurangi stock PK=${stock.pk} | tersedia=${available} | akan dikurangi=${amountToRemove}`
+      );
+
+      // Lakukan removeStock untuk stock ini
+      const res = await removeStock(stock.pk, amountToRemove, notes);
+      results.push(res);
+
+      qtyToDeduct -= amountToRemove;
+    }
+
+    console.log("Pengurangan selesai untuk semua stock.");
+    return results;
 
   } catch (error) {
     console.error(
-      `❌ Failed to remove stock for part=${product.part_pk} at location=${product.stock_item_id}`,
+      `âŒ Failed to remove stock for part=${product.part_pk} at location=${product.stock_item_id}`,
       error.response?.data || error.message
     );
-    return null;
+    throw error;
   }
 };
-
 
 const eventHandlers = {
   async onSubmit(data, process) {
@@ -49,55 +91,87 @@ const eventHandlers = {
             (product) => product.check === true && !product.picked_status
           );
 
-          const dataQuery = checkedProducts.map((product) => ({
-            graph: {
-              method: "mutate",
-              endpoint: GRAPHQL_API,
-              gqlQuery: `
-                mutation MyMutation($proc_inst_id: String!, $sku_toko: String!, $status_picked: String!, $date: timestamp!, $user_picker: String!) {
-                  update_mo_order_shop(
-                    where: {proc_inst_id: {_eq: $proc_inst_id}, sku_toko: {_eq: $sku_toko}, picked_status: { _is_null: true }},
-                    _set: {picked_status: $status_picked, user_checked_pick: $user_picker}
-                  ) {
-                    affected_rows
+          const databaseResults = [];
+
+          for (const product of checkedProducts) {
+            // 1️⃣ Remove stock dari Inventree dulu
+            const inventreeResponse = await removeStockFromInventree(product, item);
+            console.log('response : ', inventreeResponse);
+
+            if (
+              !Array.isArray(inventreeResponse) ||
+              inventreeResponse.some((status) => status < 200 || status > 299)
+            ) {
+              throw new Error(
+                `Remove stock Inventree gagal untuk SKU: ${product.sku_toko}`
+              );
+            }
+
+            console.log('Pengurangan selesai untuk semua stock. haha');
+
+            // 2️⃣ Jika sukses → baru mutate GraphQL
+            const query = {
+              graph: {
+                method: "mutate",
+                endpoint: GRAPHQL_API,
+                gqlQuery: `
+                  mutation MyMutation($proc_inst_id: String!, $sku_toko: String!, $status_picked: String!, $date: timestamp!, $user_picker: String!) {
+                    update_mo_order_shop(
+                      where: {
+                        proc_inst_id: {_eq: $proc_inst_id},
+                        sku_toko: {_eq: $sku_toko},
+                        picked_status: { _is_null: true }
+                      },
+                      _set: {
+                        picked_status: $status_picked,
+                        user_checked_pick: $user_picker
+                      }
+                    ) {
+                      affected_rows
+                    }
+                    update_mo_order(
+                      where: {proc_inst_id: {_eq: $proc_inst_id}},
+                      _set: {picked_at: $date, user_picker: $user_picker}
+                    ) {
+                      affected_rows
+                    }
                   }
-                  update_mo_order(
-                    where: {proc_inst_id: {_eq: $proc_inst_id}},
-                    _set: {picked_at: $date, user_picker: $user_picker}
-                  ) {
-                    affected_rows
-                  }
-                }`,
-              variables: {
-                proc_inst_id: instanceId,
-                sku_toko: product.sku_toko,
-                status_picked: "picked",
-                date: item.picked_at,
-                user_picker: item.user_picker,
+                `,
+                variables: {
+                  proc_inst_id: instanceId,
+                  sku_toko: product.sku_toko,
+                  status_picked: "picked",
+                  date: item.picked_at,
+                  user_picker: item.user_picker,
+                },
               },
-            },
-            query: [],
-          }));
+              query: [],
+            };
 
-          const responseQuery = await Promise.all(
-            dataQuery.map((query) => configureQuery(fastify, query))
-          );
+            const responseQuery = await configureQuery(fastify, query);
 
-          // Post ke Inventree juga
-          await Promise.all(checkedProducts.map((product) => removeStockFromInventree(product, item)));
+            databaseResults.push(responseQuery.data);
+          }
 
           results.push({
             message: "Save event processed successfully",
-            database: responseQuery.map((res) => res.data),
+            database: databaseResults,
           });
 
           try {
             if (instanceId && item.user_picker_id) {
-              // Ambil task definition key dari Camunda berdasarkan instanceId
               const camundaUrl = "https://mirorim.ddns.net:6789/api/engine-rest/";
-              const resTask = await axios.get(`${camundaUrl}task?processInstanceId=${instanceId}`);
-              if (resTask.status === 200 && Array.isArray(resTask.data) && resTask.data.length > 0) {
+              const resTask = await axios.get(
+                `${camundaUrl}task?processInstanceId=${instanceId}`
+              );
+
+              if (
+                resTask.status === 200 &&
+                Array.isArray(resTask.data) &&
+                resTask.data.length > 0
+              ) {
                 const taskDefinitionKey = resTask.data[0].taskDefinitionKey;
+
                 await unclaimTask(
                   {
                     body: {
@@ -109,6 +183,7 @@ const eventHandlers = {
                   { send: () => {} }
                 );
               }
+
               console.warn("berhasil unclaim task ✅");
             }
           } catch (e) {
@@ -116,6 +191,7 @@ const eventHandlers = {
           }
         } else {
           let pickedBefore = 0;
+          console.log( `${process.camundaUrl}/engine-rest/process-instance/${instanceId}/variables/countPicked`)
           try {
             const res = await fetch(
               `${process.camundaUrl}/engine-rest/process-instance/${instanceId}/variables/countPicked`
@@ -135,32 +211,36 @@ const eventHandlers = {
           // Hitung total products
           const countProducts = item.products?.length || 0;
 
-          // Kirim ke Camunda
-          const dataCamunda = {
-            type: "complete",
-            endpoint: `/engine-rest/task/{taskId}/complete`,
-            instance: item.proc_inst_id,
-            variables: {
-              variables: {
-                countProducts: { value: countProducts, type: "Integer" },
-                countPicked: { value: pickedTotal, type: "Integer" },
-              },
-            },
-          };
+          
 
-          const responseCamunda = await camundaConfig(dataCamunda, instanceId, process);
-
-          if (responseCamunda.status === 200 || responseCamunda.status === 204) {
+          if (item) {
             const checkedProducts = item.products.filter(
               (product) => product.check === true && !product.picked_status
             );
 
-            const dataQuery = checkedProducts.map((product) => ({
-              graph: {
-                method: "mutate",
-                endpoint: GRAPHQL_API,
-                gqlQuery: `
-                  mutation MyMutation(
+            const databaseResults = [];
+
+            for (const product of checkedProducts) {
+              // 1️⃣ Remove stock Inventree dulu
+              const inventreeResponse = await removeStockFromInventree(product, item);
+
+              if (
+                !Array.isArray(inventreeResponse) ||
+                inventreeResponse.some((status) => status < 200 || status > 299)
+              ) {
+                throw new Error(
+                  `Remove stock Inventree gagal untuk SKU: ${product.sku_toko}`
+                );
+              }
+
+
+              // 2️⃣ Jika sukses → mutate GraphQL
+              const query = {
+                graph: {
+                  method: "mutate",
+                  endpoint: GRAPHQL_API,
+                  gqlQuery: `
+                    mutation MyMutation(
                       $proc_inst_id: String!,
                       $sku_toko: String!,
                       $status_picked: String!,
@@ -181,7 +261,7 @@ const eventHandlers = {
                       ) {
                         affected_rows
                       }
-                      
+
                       update_mo_order(
                         where: { proc_inst_id: { _eq: $proc_inst_id } },
                         _set: {
@@ -192,38 +272,50 @@ const eventHandlers = {
                       ) {
                         affected_rows
                       }
-                    }`,
-                variables: {
-                  proc_inst_id: instanceId,
-                  sku_toko: product.sku_toko,
-                  status_picked: "picked",
-                  date: item.picked_at,
-                  user_picker: item.user_picker,
-                  task:
-                    item.status_proses === "box"
-                      ? "Mirorim_Operasional.Order.Box"
-                      : "Mirorim_Operasional.Order.Confirmation_Customer",
+                    }
+                  `,
+                  variables: {
+                    proc_inst_id: instanceId,
+                    sku_toko: product.sku_toko,
+                    status_picked: "picked",
+                    date: item.picked_at,
+                    user_picker: item.user_picker,
+                    task:
+                      item.status_proses === "box"
+                        ? "Mirorim_Operasional.Order.Box"
+                        : "Mirorim_Operasional.Order.Confirmation_Customer",
+                  },
                 },
-              },
-              query: [],
-            }));
+                query: [],
+              };
 
-            const responseQuery = await Promise.all(
-              dataQuery.map((query) => configureQuery(fastify, query))
-            );
+              const responseQuery = await configureQuery(fastify, query);
 
-            // Post ke Inventree juga
-            await Promise.all(checkedProducts.map((product) => removeStockFromInventree(product, item)));
+              databaseResults.push(responseQuery.data);
+            }
 
             results.push({
               message: "Complete event processed successfully",
-              camunda: responseCamunda.data,
-              database: responseQuery.map((res) => res.data),
+              database: databaseResults,
             });
           }
+          // Kirim ke Camunda
+          const dataCamunda = {
+            type: "complete",
+            endpoint: `/engine-rest/task/{taskId}/complete`,
+            instance: item.proc_inst_id,
+            variables: {
+              variables: {
+                countProducts: { value: countProducts, type: "Integer" },
+                countPicked: { value: pickedTotal, type: "Integer" },
+              },
+            },
+          };
+
+          const responseCamunda = await camundaConfig(dataCamunda, instanceId, process);
         }
       } catch (error) {
-        console.error(`Error executing handler for event: ${data?.eventKey || "unknown"}`, error);
+        console.error(`Error executing handler for event: ${data?.eventKey || "unknown"}, error`);
         throw error;
       }
     }
@@ -247,7 +339,7 @@ const handle = async (eventData) => {
   try {
     return await eventHandlers[eventKey](data, process);
   } catch (error) {
-    console.error(`Error executing handler for event: ${eventKey}`, error);
+    console.error(`Error executing handler for event: ${eventKey}, error`);
     throw error;
   }
 };

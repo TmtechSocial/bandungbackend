@@ -17,6 +17,8 @@ const eventHandlers = {
           instance: item.proc_inst_id,
           variables: {
             variables: {
+              evidence_packing: { value: item.evidence[0] || "", type: "String" },
+	                    overweight: { value: item.overweight, type: "Boolean" },
             },
           },
         };

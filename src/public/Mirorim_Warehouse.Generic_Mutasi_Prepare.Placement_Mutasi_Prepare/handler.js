@@ -6,6 +6,36 @@ const SERVER_INVENTREE = process.env.SERVER_INVENTREE;
 const INVENTREE_API_TOKEN = process.env.INVENTREE_API_TOKEN;
 const CAMUNDA_API = process.env.CAMUNDA_API;
 const axios = require("axios");
+async function distributeQuantity(quantityArr, quantity_input_partial) {
+  const result = new Array(quantityArr.length).fill(0);
+
+  // 1️⃣ cek apakah ada yang sama persis
+  const exactIndex = quantityArr.findIndex(
+    qty => qty === quantity_input_partial
+  );
+
+  if (exactIndex !== -1) {
+    result[exactIndex] = quantity_input_partial;
+    return result;
+  }
+
+  // 2️⃣ cek apakah semua qty > quantity_input_partial
+  if (quantityArr.every(qty => qty > quantity_input_partial)) {
+    result[0] = quantity_input_partial;
+    return result;
+  }
+
+  // 3️⃣ sebar dari index 0
+  let remaining = quantity_input_partial;
+
+  for (let i = 0; i < quantityArr.length && remaining > 0; i++) {
+    const take = Math.min(quantityArr[i], remaining);
+    result[i] = take;
+    remaining -= take;
+  }
+
+  return result;
+}
 
 const inventree = axios.create({
   baseURL: `${SERVER_INVENTREE}/api`,
@@ -23,11 +53,6 @@ const eventHandlers = {
       try {
         let instanceId = item.proc_inst_id || null;
 
-        const destinationVar = await axios.get(
-          `${CAMUNDA_API}engine-rest/process-instance/${item.proc_inst_id}/variables/destination_type`
-        );
-        const destinationType = destinationVar.data.value;
-        console.log("destination_type:", destinationType);
 
         const dataCamunda = {
           type: "complete",
@@ -46,106 +71,110 @@ const eventHandlers = {
         );
 
         console.log("responseCamunda", responseCamunda);
-
+        const quantityVar = await axios.get(
+          `${CAMUNDA_API}engine-rest/process-instance/${item.proc_inst_id}/variables/quantity`
+        );
+        const source_stock = await axios.get(
+          `${CAMUNDA_API}engine-rest/process-instance/${item.proc_inst_id}/variables/source_stock`
+        );
+        const stockpkArr = JSON.parse(source_stock.data.value);
+        const quantityArr = JSON.parse(quantityVar.data.value);
         if (responseCamunda.status === 200 || responseCamunda.status === 204) {
           // Query update GraphQL
-            let destLocationPk = null;
-            try {
-              const res = await inventree.get(
-                `/stock/location/?name=${item.destination}`
-              );
-              destLocationPk = res.data.results?.[0]?.pk || null;
-            } catch {
-              destLocationPk = null;
-            }
-
-            const transferPayload = {
-              items: [
-                {
-                  pk: Number(item.source_id_wip),
-                  status: item.destination.includes("RE") ? 65 : 10,
-                  quantity: item.quantity_input,
-                },
-              ],
-              notes: `Transfer Mutasi | Proc ID: ${item.proc_inst_id}`,
-              location: destLocationPk,
-            };
-
-            const { data: stockData } = await inventree.post(
-              "/stock/transfer/",
-              transferPayload
-            );
-
-            if (destinationType === "Retail") {
-              try {
-                const { data: stockItems } = await inventree.get(
-                  `/stock/?location=${destLocationPk}&part=${item.part_id}`
-                );
-
-                const stockPKs = stockItems?.results
-                  ?.map((stock) => stock.pk)
-                  .filter(Boolean);
-
-                if (!stockPKs.length) {
-                  console.warn(
-                    `⚠️ Tidak ada stok ditemukan untuk merge di lokasi ${destLocationPk} part ${item.part_id}`
+            for (const product of item.products) {
+            if (product.is_partial){
+              const quantity_input_partial = product.quantity_input_partial || 0;
+              const distributedQtys = await distributeQuantity(quantityArr, quantity_input_partial);
+              for (let i = 0; i < quantityArr.length; i++) {
+                if (distributedQtys[i] == 0) continue;
+                let destLocationPk = null;
+                try {
+                  const res = await inventree.get(
+                    `/stock/location/?name=${product.destination}`
                   );
-                } else {
-                  // 🟢 Gunakan 'item' bukan 'pk'
-                  const mergePayload = {
-                    items: stockPKs.map((pk) => ({ item: pk })),
-                    location: destLocationPk,
-                    notes: `Merge stok Retail | Proc inst ID: ${item.proc_inst_id}`,
-                  };
-
-                  console.log(
-                    "📦 mergePayload:",
-                    JSON.stringify(mergePayload, null, 2)
-                  );
-
-                  const mergeResponse = await inventree.post(
-                    `/stock/merge/`,
-                    mergePayload
-                  );
+                  destLocationPk = res.data.results[0]?.pk || null;
+                } catch {
+                  destLocationPk = null;
                 }
-              } catch (mergeError) {
-                console.error(
-                  "❌ Gagal merge stok di Inventree:",
-                  mergeError.response?.data || mergeError.message
+                const transferPayload = {
+                  items: [
+                    {
+                      pk: Number(stockpkArr[i]),
+                      status: product.destination.includes("RE") ? 65 : 10,
+                      quantity: distributedQtys[i],
+                    },
+                  ],
+                  notes: `Transfer Mutasi | Proc ID: ${item.proc_inst_id}`,
+                  location: destLocationPk,
+                };
+    
+                const { data: stockData } = await inventree.post(
+                  "/stock/transfer/",
+                  transferPayload
                 );
+                console.log("stockData", stockData);
+              }
+            }else{
+              for (let i = 0; i < quantityArr.length; i++) {
+                let destLocationPk = null;
+                if (quantityArr[i] == 0) continue;
+                try {
+                  const res = await inventree.get(
+                    `/stock/location/?name=${product.destination}`
+                  );
+                  destLocationPk = res.data.results[0]?.pk || null;
+                } catch {
+                  destLocationPk = null;
+                }
+                const transferPayload = {
+                  items: [
+                    {
+                      pk: Number(stockpkArr[i]),
+                      status: product.destination.includes("RE") ? 65 : 10,
+                      quantity: quantityArr[i],
+                    },
+                  ],
+                  notes: `Transfer Mutasi | Proc ID: ${item.proc_inst_id}`,
+                  location: destLocationPk,
+                };
+    
+                const { data: stockData } = await inventree.post(
+                  "/stock/transfer/",
+                  transferPayload
+                );
+                console.log("stockData", stockData);
               }
             }
-
+            
             const dataQuery = {
               graph: {
                 method: "mutate",
                 endpoint: GRAPHQL_API,
                 gqlQuery: `mutation MyMutation($proc_inst_id: String!, $quantity_physical: Int!, $quantity_data: Int!, $status: String!, $file: String!) {
                   update_internal_consolidation_process
-(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {quantity_physical: $quantity_physical, quantity_data: $quantity_data, status: $status, evidence_placement: $file}) {
+                  (where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {quantity_physical: $quantity_physical, quantity_data: $quantity_data, status: $status, evidence_placement: $file}) {
                     affected_rows
-                  }
-                }
-`,
-                variables: {
-                  proc_inst_id: item.proc_inst_id,
-                  quantity_physical: item.quantity_physical || 0,
-                  quantity_data: item.total_quantity_system || 0,
-                  status: "Completed",
-                  file: item.evidence?.[0] || ""
-                },
-              },
-              query: [],
-            };
-
-            console.log("dataQuery", dataQuery);
-
-            // Jalankan query (tunggal, bukan array), jangan pakai .map
-            const responseQuery = await configureQuery(fastify, dataQuery);
-
-            console.log("responseQuery", responseQuery);
-          
-
+                    }
+                    }
+                    `,
+                    variables: {
+                      proc_inst_id: item.proc_inst_id,
+                      quantity_physical: item.quantity_physical || 0,
+                      quantity_data: item.total_quantity_system || 0,
+                      status: "Completed",
+                      file: item.evidence?.[0] || ""
+                    },
+                  },
+                  query: [],
+                };
+                
+                console.log("dataQuery", dataQuery);
+                
+                // Jalankan query (tunggal, bukan array), jangan pakai .map
+                const responseQuery = await configureQuery(fastify, dataQuery);
+                
+                console.log("responseQuery", responseQuery);
+              }
           results.push({
             message: "Create event processed successfully",
             camunda: responseCamunda.data,

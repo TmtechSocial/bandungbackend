@@ -18,8 +18,10 @@ const eventHandlers = {
                 const Reject = products.some(p => p.quantity_not_ok > 0);
                 const Retail = products.some(p => p.output_status === "Retail");
                 const Wholesale = products.some(p => p.output_status === "Wholesale");
+                const WholesaleD7 = products.some(p => p.output_status === "WHOLESALED7");
                 const uniqueTrxRetail = `RR|${dateCode}|${item.invoice}`;
                 const uniqueTrxWholesale = `RW|${dateCode}|${item.invoice}`;
+                const uniqueTrxWholesaleD7 = `RWD7|${dateCode}|${item.invoice}`;
                 const uniqueTrxReject = `RJ|${dateCode}|${item.invoice}`;
 
                 // Buat payload Camunda
@@ -32,8 +34,10 @@ const eventHandlers = {
                             Reject: { value: Reject, type: "Boolean" },
                             Retail: { value: Retail, type: "Boolean" },
                             Wholesale: { value: Wholesale, type: "Boolean" },
+                            WholesaleD7: { value: WholesaleD7, type: "Boolean" },
                             uniqueTrxRetail: { value: uniqueTrxRetail, type: "String" },
                             uniqueTrxWholesale: { value: uniqueTrxWholesale, type: "String" },
+                            uniqueTrxWholesaleD7: { value: uniqueTrxWholesaleD7, type: "String" },
                             uniqueTrxReject: { value: uniqueTrxReject, type: "String" },
                         },
                     },
@@ -51,7 +55,16 @@ const eventHandlers = {
                         const baseOutputStatus = product.output_status;
                         const baseLocation = product.location_id;
                         if (product.quantity_ok > 0) {
-                            const prefix = baseOutputStatus === "Retail" ? "RR" : "RW";
+                            let prefix;
+                            if (baseOutputStatus == "Retail") {
+                                prefix = "RR";
+                            } else if (baseOutputStatus == "Wholesale") {
+                                prefix = "RW";
+                            } else if (baseOutputStatus == "WHOLESALED7") {
+                                prefix = "RWD7";
+                            } else {
+                                prefix = "UN"; // UN for Unknown
+                            }
                             const unique_trx = `${prefix}|${dateCode}|${item.invoice}`;
                             productQueries.push({
                                 graph: {

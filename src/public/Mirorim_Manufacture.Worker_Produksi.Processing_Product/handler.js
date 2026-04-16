@@ -16,10 +16,10 @@ const eventHandlers = {
         const instanceId = item.proc_inst_id || null;
         const statusValue = item.insert_status || "";
 
-        console.log("📦 Status:", statusValue);
+        console.log("?? Status:", statusValue);
 
-        // 🟢 CASE: Finish → complete Camunda task
-        if (statusValue == "Finish" && item.quantity_finish_worker === item.quantity_request) {
+        // ?? CASE: Finish ? complete Camunda task
+        if (statusValue == "Finish" && item.quantity_finish_worker === item.quantity_request || statusValue == "Finish Sebagian" && item.quantity_finish_worker < item.quantity_request) {
           const dataCamunda = {
             type: "complete",
             endpoint: `/engine-rest/task/{taskId}/complete`,
@@ -34,19 +34,22 @@ const eventHandlers = {
                   value: item.quantity_request,
                   type: "Integer",
                 },
+                status: {
+                  value: statusValue,
+                  type: "String",
+                },
               },
             },
           };
 
           try {
             responseCamunda = await camundaConfig(dataCamunda, instanceId, process);
-            console.log("✅ Camunda complete success:", responseCamunda.status);
+            console.log("? Camunda complete success:", responseCamunda.status);
           } catch (err) {
-            console.error("❌ Camunda complete failed:", err.message || err);
+            console.error("? Camunda complete failed:", err.message || err);
           }
         }
 
-        // 🟡 CASE: Pause → unclaim Camunda task
         if (statusValue === "Pause") {
           try {
             const taskResponse = await axios.get(`${CAMUNDA_API}engine-rest/task`, {
@@ -60,17 +63,16 @@ const eventHandlers = {
                 `${CAMUNDA_API}engine-rest/task/${taskId}/unclaim`
               );
 
-              console.log(`🚧 Task ${taskId} unclaimed for instance: ${instanceId}`);
+              console.log(`?? Task ${taskId} unclaimed for instance: ${instanceId}`);
               responseCamunda = { status: unclaimResponse.status, taskId };
             } else {
-              console.warn("⚠️ No active task found for instance:", instanceId);
+              console.warn("?? No active task found for instance:", instanceId);
             }
           } catch (err) {
-            console.error("❌ Failed to unclaim task:", err.message || err);
+            console.error("? Failed to unclaim task:", err.message || err);
           }
         }
 
-        // 🧩 GraphQL mutation
         const currentDate = new Date(Date.now() + 7 * 60 * 60 * 1000)
           .toISOString()
           .replace("T", " ")
@@ -131,17 +133,17 @@ const eventHandlers = {
         };
 
         const responseQuery = await configureQuery(fastify, dataQuery);
-        console.log("🧩 Query result:", JSON.stringify(responseQuery));
+        console.log("?? Query result:", JSON.stringify(responseQuery));
 
         results.push({
-          message: "✅ Create event processed successfully",
+          message: "? Create event processed successfully",
           camunda: responseCamunda?.data || null,
           database: responseQuery?.data || null,
         });
       } catch (error) {
-        console.error("❌ Error executing onSubmit:", error);
+        console.error("? Error executing onSubmit:", error);
         results.push({
-          message: "❌ Failed processing item",
+          message: "? Failed processing item",
           error: error.message || error,
         });
       }
@@ -151,14 +153,14 @@ const eventHandlers = {
   },
 
   async onChange(data) {
-    console.log("🔄 Handling onChange with data:", data);
+    console.log("?? Handling onChange with data:", data);
     return { message: "onChange executed", data };
   },
 };
 
 const handle = async (eventData) => {
   const { eventKey, data, process } = eventData;
-  console.log("📨 Received eventData:", eventData);
+  console.log("?? Received eventData:", eventData);
 
   if (!eventHandlers[eventKey]) {
     throw new Error(`No handler found for event: ${eventKey}`);
@@ -167,7 +169,7 @@ const handle = async (eventData) => {
   try {
     return await eventHandlers[eventKey](data, process);
   } catch (err) {
-    console.error(`❌ Error executing handler for event: ${eventKey}`, err);
+    console.error(`? Error executing handler for event: ${eventKey}`, err);
     throw err;
   }
 };

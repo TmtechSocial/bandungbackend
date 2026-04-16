@@ -29,6 +29,7 @@ const eventHandlers = {
         let wip = 0;
         if (item.trx_prefix === "RR") wip = 1000003;
         else if (item.trx_prefix === "RW") wip = 1000002;
+        else if (item.trx_prefix === "RWD7") wip = 1000007;
         else if (item.trx_prefix === "RJ") wip = 6224;
         // 🔄 Start Camunda process
         const dataCamunda = {

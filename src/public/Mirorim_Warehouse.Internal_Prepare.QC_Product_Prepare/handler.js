@@ -15,7 +15,59 @@ const inventree = axios.create({
                   },
                   timeout: 10000,
                 });
+function isSameArray(arr1, arr2) {
+  if (arr1.length !== arr2.length) return false;
 
+  return arr1.every((value, index) => value === arr2[index]);
+}
+
+async function distributeRemove(qtyArr, selisih, inputQtyArr) {
+  const absSelisih = Math.abs(selisih);
+  const inputArr = [...inputQtyArr];
+  const totalQty = qtyArr.reduce((acc, val) => acc + val, 0);
+  const removeArr = new Array(qtyArr.length).fill(0);
+    // 1️⃣ Cari qty yang sama persis dengan abs selisih
+  const exactIndex = qtyArr.findIndex((qty) => qty === absSelisih);
+  if (exactIndex !== -1) {
+    if ((isSameArray(inputQtyArr, qtyArr))){
+      inputArr[exactIndex] = 0;
+    }else {
+      inputArr[exactIndex] += absSelisih;
+    }
+    removeArr[exactIndex] = absSelisih;
+    return { inputArr, removeArr };
+  }
+
+  // 2️⃣ Jika semua qty lebih besar dari abs selisih
+  const sufficientIndex = qtyArr.findIndex(qty => qty >= absSelisih);
+
+  if (sufficientIndex !== -1) {
+    if (isSameArray(inputQtyArr, qtyArr)) {
+      inputArr[sufficientIndex] -= absSelisih;
+    } else {
+      inputArr[sufficientIndex] += absSelisih;
+    }
+    removeArr[sufficientIndex] = absSelisih;
+    return { inputArr, removeArr };
+  }
+
+  // 3️⃣ Distribusi bertahap
+  let remaining = absSelisih;
+  for (let i = 0; i < qtyArr.length; i++) {
+    if (remaining <= 0) break;
+
+    const taken = Math.min(inputArr[i], remaining);
+    if (isSameArray(inputQtyArr, qtyArr)) {
+      inputArr[i] -= taken;
+    }else {
+      inputArr[i] += taken;
+    }
+    removeArr[i] = taken;
+    remaining -= taken;
+  }
+
+  return { inputArr, removeArr };
+}
 
 const eventHandlers = {
   async onSubmit(data, process) {
@@ -28,7 +80,36 @@ const eventHandlers = {
 
         const statusValue = item.insert_status?.value || "";
         console.log("📦 Status:", statusValue);
-
+        const stockPrimaryVar = await axios.get(
+          `${CAMUNDA_API}engine-rest/process-instance/${item.proc_inst_id}/variables/primary_stock`
+        );
+        const source_stock = await axios.get(
+          `${CAMUNDA_API}engine-rest/process-instance/${item.proc_inst_id}/variables/source_stock`
+        );
+        const quantityVar = await axios.get(
+          `${CAMUNDA_API}engine-rest/process-instance/${item.proc_inst_id}/variables/quantity`
+        );
+        const primaryStockArr = JSON.parse(stockPrimaryVar.data.value);
+        const stockpkArr = JSON.parse(source_stock.data.value);
+        const quantityArr = JSON.parse(quantityVar.data.value);
+        let selectedIndex = 0;
+        const qtyPick = item.quantity ?? 0;
+        const qtyAdjust = item.quantity_qc ?? 0;
+        const selisih = qtyAdjust - qtyPick;
+        let inputArr = [];
+        let removeArr = [];
+        if (selisih < 0) {
+          const result = await distributeRemove(quantityArr, selisih, quantityArr);
+          inputArr = result.inputArr;
+          removeArr = result.removeArr;
+        } else if (selisih > 0) {
+          inputArr = [...quantityArr];   // copy array
+          inputArr[0] += selisih;        // tambah di index 0
+          removeArr = new Array(quantityArr.length).fill(0);
+          removeArr[0] = selisih;
+        }else {
+          inputArr = [...quantityArr];   // copy array
+        }
         // === CAMUNDA TASK COMPLETE ===
         if (statusValue === "Finish") {
           const dataCamunda = {
@@ -37,7 +118,9 @@ const eventHandlers = {
             instance: instanceId,
             variables: {
               variables: {
+                quantity: { value: inputArr, type: "String" },
                 quantity_staging: { value: item.quantity_qc, type: "Integer" },
+                quantity_qc_prepare: { value: item.quantity_qc, type: "Integer" },
               },
             },
           };
@@ -61,24 +144,27 @@ const eventHandlers = {
             try {
               // Hitung selisih antara quantity QC dan quantity
               const selisih = item.quantity_qc - item.quantity;
-              console.log("🔍 Selisih quantity:", selisih);
+              console.log("🔍 Selisih quantity11:", selisih);
 
               if (selisih !== 0) {
+              console.log("🔍 Selisih quantityss:", selisih);
                 // Jika ada selisih, lakukan adjustment di InvenTree
-                const responseInventree = await inventree.post(
-                  `/stock/${selisih > 0 ? "add" : "remove"}/`,
-                  {
-                    items: [
-                      {
-                        pk: item.stock_item_wip, // pastikan stockpk sudah didefinisikan di luar
-                        quantity: Math.abs(selisih),
-                      },
-                    ],
-                    notes: `Adjustment QC PREPARE | Selisih: ${selisih} | Proc Inst ID: ${item.proc_inst_id}`,
-                  }
-                );
-
-                console.log("✅ InvenTree response:", responseInventree.data);
+                for (let i = 0; i < stockpkArr.length; i++) {
+                  if (removeArr[i] == 0) continue;
+                  const responseInventree = await inventree.post(
+                    `/stock/${selisih > 0 ? "add" : "remove"}/`,
+                    {
+                      items: [
+                        {
+                          pk: stockpkArr[i],
+                          quantity: Math.abs(removeArr[i]),
+                        },
+                      ],
+                      notes: `Adjustment QC PREPARE | Selisih: ${selisih > 0 ? "" : "-"} ${Math.abs(removeArr[i])} | Proc Inst ID: ${item.proc_inst_id}`,
+                    }
+                  );
+                  console.log(responseInventree.data);
+                }
               } else {
                 console.log("🔍 Tidak ada selisih, tidak perlu adjustment.");
               }

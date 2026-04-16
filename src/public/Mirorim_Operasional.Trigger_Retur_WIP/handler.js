@@ -14,7 +14,7 @@ const eventHandlers = {
       try {
         const instanceId = item.proc_inst_id || null;
 
-        // 🔹 setup axios instance untuk Inventree
+        // ?? setup axios instance untuk Inventree
         const inventree = axios.create({
           baseURL: `${SERVER_INVENTREE}/api`,
           headers: {
@@ -24,24 +24,24 @@ const eventHandlers = {
           timeout: 10000,
         });
 
-        // 🔹 1. Cek apakah resi valid (belum diproses)
+        // ?? 1. Cek apakah resi valid (belum diproses)
         const checkQuery = {
           graph: {
             method: "query",
             endpoint: GRAPHQL_API,
             gqlQuery: `
-              query MyQuery($resi_retur: String!) {
-                mo_retur_receive(
-                  where: {
-                    resi_retur: { _eq: $resi_retur },
-                    status_staging: { _is_null: true }
-                  }
-                ) {
-                  invoice
-                  resi_retur
-                }
-              }
-            `,
+      query MyQuery($resi_retur: String!) {
+        mo_retur_receive(
+          where: {
+            resi_retur: { _eq: $resi_retur },
+            status_staging: { _eq: "Delivered" }
+          }
+        ) {
+          invoice
+          resi_retur
+        }
+      }
+    `,
             variables: { resi_retur: item.resi_retur },
           },
           query: [],
@@ -61,28 +61,35 @@ const eventHandlers = {
           variables: {
             variables: {
               resi_retur: { value: item.resi_retur, type: "String" },
+              status_invoice: {value: item.status_invoice, type: "string",},
             },
           },
         };
         const responseCamunda = await camundaConfig(dataCamunda, instanceId);
-        console.log("🌀 responseCamunda:", responseCamunda.status);
+        console.log("?? responseCamunda:", responseCamunda.status);
         if (responseCamunda.status === 200 || responseCamunda.status === 204) {
-          console.log("✅ Camunda berhasil dijalankan untuk resi:", item.resi_retur);
+          console.log("? Camunda berhasil dijalankan untuk resi:", item.resi_retur);
+
+          const isMilikMirorim =
+        item.status_barang_retur === "isi barang ada" &&
+        item.fisik_match === "Barang Kita";
+          
+        if (isMilikMirorim) {
           for (const product of item.products) {
             try {
               const stockUrl = `/stock/?batch=${product.invoice}&part=${product.part_pk}&location=6217&ordering=-updated`;
-              console.log("🔎 GET:", stockUrl);
+              console.log("?? GET:", stockUrl);
 
               const stockRes = await inventree.get(stockUrl);
               const stocks = stockRes.data?.results || stockRes.data;
 
               if (!stocks || stocks.length === 0) {
-                console.warn(`⚠️ Tidak ada stok ditemukan untuk part_pk ${product.part_pk} dan batch ${product.invoice}`);
+                console.warn(`?? Tidak ada stok ditemukan untuk part_pk ${product.part_pk} dan batch ${product.invoice}`);
                 continue;
               }
 
               const stockPk = stocks[0].pk;
-              console.log(`✅ Stock PK ditemukan: ${stockPk}`);
+              console.log(`? Stock PK ditemukan: ${stockPk}`);
               const transferBody = {
                 items: [
                   {
@@ -95,7 +102,7 @@ const eventHandlers = {
               };
 
               const transferRes = await inventree.post(`/stock/transfer/`, transferBody);
-              console.log(`🚚 Transfer success untuk ${product.product_name}:`, transferRes.status);
+              console.log(`?? Transfer success untuk ${product.product_name}:`, transferRes.status);
               const updateQuery = {
                 graph: {
                   method: "mutate",
@@ -119,38 +126,42 @@ const eventHandlers = {
                 query: [],
               };
               await configureQuery(fastify, updateQuery);
-              console.log(`🧩 Update berhasil untuk invoice ${product.invoice} part_pk ${product.part_pk}`);
+              console.log(`?? Update berhasil untuk invoice ${product.invoice} part_pk ${product.part_pk}`);
             } catch (err) {
-              console.error(`❌ Error transfer part ${product.part_pk}:`, err.response?.data || err.message);
+              console.error(`? Error transfer part ${product.part_pk}:`, err.response?.data || err.message);
             }
           }
+        }else {
+          console.log("ℹ️ Barang bukan milik mirorim atau fisik tidak match, tidak melakukan transfer stok ke WIP.");
+        }
+
           const updateQuery = {
             graph: {
               method: "mutate",
               endpoint: GRAPHQL_API,
               gqlQuery: `
-                mutation UpdateReturStatus($resi: String!) {
+                mutation UpdateReturStatus($resi: String!, $retur_type: String!, $task: String!) {
                   update_mo_retur_receive(
                     where: { resi_retur: { _eq: $resi } },
-                    _set: { status_staging: "Processed" }
+                    _set: { status_staging: "Processed", retur_type: $retur_type, task_def_key: $task }
                   ) {
                     affected_rows
                   }
                 }
               `,
-              variables: { resi: item.resi_retur },
+              variables: { resi: item.resi_retur, retur_type: item.status_invoice, task: item.task_def_key},
             },
             query: [],
           };
           const updateResponse = await configureQuery(fastify, updateQuery);
-          console.log("🧾 updateResponse:", JSON.stringify(updateResponse, null, 2));
+          console.log("?? updateResponse:", JSON.stringify(updateResponse, null, 2));
           results.push({
-            message: "✅ Process sukses — Camunda dijalankan, stok ditransfer ke WIP, dan status diperbarui",
+            message: "? Process sukses � Camunda dijalankan, stok ditransfer ke WIP, dan status diperbarui",
             resi_retur: item.resi_retur,
           });
         }
       } catch (error) {
-        console.error(`❌ Error executing onSubmit:`, error);
+        console.error(`? Error executing onSubmit:`, error);
         throw error;
       }
     }

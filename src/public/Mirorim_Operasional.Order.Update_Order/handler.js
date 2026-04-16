@@ -70,7 +70,7 @@ const eventHandlers = {
                   $task: String!
                 ) { 
                   update_mo_order_shop(
-                    where: {proc_inst_id: {_eq: $proc_inst_id}, sku_toko: {_eq: $sku_toko}}, 
+                    where: {proc_inst_id: {_eq: $proc_inst_id}, sku_toko: {_eq: $sku_toko}, picked_status: {_is_null: true}}, 
                     _set: {
                       quantity_order: $quantity_order, 
                       quantity_convert: $quantity_change, 
@@ -87,7 +87,7 @@ const eventHandlers = {
                   sku_toko: product.sku_toko,
                   quantity_order: product.quantity_order_change,
                   quantity_change: quantity_convert,
-                  picked_status: product.quantity_order_change === 0 ? "picked" : product.quantity_order_change !== product.quantity_order ? null : "picked",
+                  picked_status: product.quantity_order_change === 0 ? "picked" : product.quantity_order_change !== product.quantity_order ? null : null,
                   task:
                     item.refund_decision === "picker"
                       ? "Mirorim_Operasional.Order.Adjustment_Order"

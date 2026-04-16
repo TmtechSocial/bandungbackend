@@ -16,7 +16,7 @@ const eventHandlers = {
       try {
         let instanceId = item.proc_inst_id || null;
         const destinationSkuOriginal = item.destination;
-
+        const part_id = item.part_id;
 
         // ?? Format tanggal: YY-MM-DD
         const now = new Date();
@@ -50,7 +50,24 @@ const eventHandlers = {
         
 
         const checkResponse = await configureQuery(fastify, checkQuery);
-        console.log("checkResponse", JSON.stringify(checkResponse));
+        const checkStockInventree = {
+              graph: {
+                method: "query",
+                endpoint: GRAPHQL_API,
+                gqlQuery: `
+                  query MyQuery($part_id: Int!) {
+                    vw_check_stock_inventree(where: {part_id: {_eq: $part_id}}) {
+                      kondisi
+                    }
+                  }
+                `,
+                variables: { part_id: part_id },
+              },
+              query: [],
+            };
+        const checkStockInventreeResult = await configureQuery(fastify, checkStockInventree);
+        // console.log("checkStockInventreeResult:", JSON.stringify(checkStockInventreeResult.data, null, 2));
+        const kondisi = checkStockInventreeResult?.data?.[0]?.graph?.vw_check_stock_inventree?.[0]?.kondisi || "Unknown";
         
         const existing = checkResponse?.data?.[0].graph?.internal_consolidation_process?.[0];
         console.log("existing", existing);
@@ -125,14 +142,19 @@ const eventHandlers = {
             const locationDescription = item.destination_location_description;
 
             let destinationTypeTable;
-            if (locationDescription === "GUDANG" || locationDescription === "REJECT" || item.destination.includes("RE")) {
-              destinationTypeTable = "Wholesale";
-            } else if (locationDescription === "TOKO") {
-              destinationTypeTable = "Retail";
-            } else {
-              destinationTypeTable = locationDescription || "Unknown";
-            }
-
+           if (
+  locationDescription === "REJECT" ||
+  locationDescription === "RE" ||
+  item.destination.includes("RE")
+) {
+  destinationTypeTable = "Reject";
+} else if (locationDescription === "GUDANG") {
+  destinationTypeTable = "Wholesale";
+} else if (locationDescription === "TOKO") {
+  destinationTypeTable = "Retail";
+} else {
+  destinationTypeTable = locationDescription || "Unknown";
+}
             console.log(destinationTypeTable);
             
         // ?? Kirim ke Camunda
@@ -151,6 +173,7 @@ const eventHandlers = {
               created_by: { value: item.user, type: "String" },
               product_name: { value: part_name, type: "String" },
               urgensi: { value: item.urgensi, type: "String" },
+              validator : { value: kondisi, type: "String" },
             },
             businessKey: `${part_name}:${item.destination}:${item.urgensi}`,
           },

@@ -51,8 +51,6 @@ const eventHandlers = {
             : [],
         };
 
-        const selisih = item.quantity_pcs_wasit - item.total_quantity_system;
-
         /* ==========================
            CAMUNDA PAYLOAD
         ========================== */
@@ -74,8 +72,8 @@ const eventHandlers = {
                 value: item.result_action === "Adjustment SO",
                 type: "Boolean",
               },
-              selisih: {
-                value: selisih,
+              quantity_pcs_wasit: {
+                value: item.quantity_pcs_wasit,
                 type: "Integer",
               },
               notes: {
@@ -84,7 +82,7 @@ const eventHandlers = {
               },
               quantity_system: {
                 value: item.total_quantity_system ?? 0,
-                type: "Integer",
+                type: "Double",
               },
               data_stock: {
                 value: JSON.stringify(
@@ -146,10 +144,7 @@ mutation InsertStockOpnameLogs(
                 user: item.user,
                 quantity_input: item.quantity_pcs_wasit ?? 0,
                 task_def_key: "Mirorim_Stock.Stock_Opname.Adjustment_Quantity",
-                status:
-                  item.result_action === "Adjustment SO"
-                    ? "Finish"
-                    : "Recount Worker",
+                status: "Finish",
                 created_at: new Date(
                   Date.now() + 7 * 60 * 60 * 1000
                 ).toISOString(),
@@ -161,7 +156,7 @@ mutation InsertStockOpnameLogs(
 
           const responseQuery = await configureQuery(fastify, dataQuery);
 
-          if (item.result_action === "Worker Input Ulang") {
+          if (item.result_action === "Tidak Diadjustment") {
             const upsertParameter = async (part_pk, template, value) => {
               const exist = await inventree.get(
                 `/part/parameter/?part=${part_pk}&template=${template}`
@@ -181,8 +176,17 @@ mutation InsertStockOpnameLogs(
               }
             };
 
-            await upsertParameter(item.part_id, 15, item.berat_kotor);
-            await upsertParameter(item.part_id, 16, item.berat_bersih);
+            if (item.sampling_berat_kotor !== 0) {
+              await upsertParameter(item.part_id, 15, item.sampling_berat_kotor);
+            } else {
+              console.log("Skip upsert sampling_berat_kotor karena nilainya 0");
+            }
+
+            if (item.sampling_berat_bersih !== 0) {
+              await upsertParameter(item.part_id, 16, item.sampling_berat_bersih);
+            } else {
+              console.log("Skip upsert sampling_berat_bersih karena nilainya 0");
+            }
           }
 
           results.push({

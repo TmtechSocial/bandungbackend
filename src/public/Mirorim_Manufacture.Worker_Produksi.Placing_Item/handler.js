@@ -79,45 +79,6 @@ const eventHandlers = {
             const description = descriptionLocation.data.description || "";
             console.log("📍 Description Location:", description);
 
-            if (description === "TOKO") {
-              try {
-  const responseStock = await axiosInstance.get(
-    `/api/stock/?location=${item.destination_finish}&part=${item.part_pk}`
-  );
-
-  const stockResults = responseStock.data?.results || responseStock.data || [];
-  const stockPKs = Array.isArray(stockResults)
-    ? stockResults.map((stock) => stock.pk).filter(Boolean)
-    : [];
-    console.log("resultss", stockResults);
-    console.log("resultss pk", stockPKs);
-    
-
-  if (stockPKs.length === 0) {
-    console.warn(
-      `⚠️ Tidak ada stok ditemukan untuk merge di lokasi ${item.destination_finish} part ${item.part_pk}`
-    );
-  } else {
-    const mergePayload = {
-      items: stockPKs.map((pk) => ({ item: pk })),
-      location: item.destination_finish,
-      notes: `Merge stock Retail From Produksi | Proc ID: ${item.proc_inst_id}`,
-    };
-
-    console.log("📦 mergePayload:", JSON.stringify(mergePayload, null, 2));
-
-    const mergeResponse = await axiosInstance.post(`/api/stock/merge/`, mergePayload);
-    console.log("✅ Merge sukses:", mergeResponse.data);
-  }
-} catch (mergeError) {
-  console.error(
-    "❌ Gagal merge stok di Inventree:",
-    mergeError.response?.data || mergeError.message
-  );
-}
-
-            }
-
             // Kalau ada reject, kirim payload reject
             if (item.quantity_reject > 0) {
               const payloadReject = {

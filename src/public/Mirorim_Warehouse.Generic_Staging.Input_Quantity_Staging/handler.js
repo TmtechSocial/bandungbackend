@@ -14,9 +14,25 @@ const eventHandlers = {
       try {
         const instanceId = item.proc_inst_id;
 
-        // ✅ Tentukan payload Camunda secara dinamis
+        // âœ… Tentukan payload Camunda secara dinamis
         let camundaVariables = {
-          quantity_input: { value: item.quantity_input, type: "Integer" },
+          quantity_input: {
+            value: item.convert_quantity_input,
+            type: "Integer",
+          },
+          evidence_delivery_staging: {
+            value: item.evidence[0] || "",
+            type: "String",
+          },
+          isValid: { value: item.tolerance_valid, type: "Boolean" },
+          Input_Quantity_Staging_Json: {
+            value: JSON.stringify([item]),
+            type: "Object",
+            valueInfo: {
+              objectTypeName: "java.util.ArrayList",
+              serializationDataFormat: "application/json",
+            },
+          },
         };
 
         if (item.tipe_wip === "PREPARE") {
@@ -33,11 +49,19 @@ const eventHandlers = {
           variables: { variables: camundaVariables },
         };
 
-        // 🔹 Kirim ke Camunda
-        const responseCamunda = await camundaConfig(dataCamunda, instanceId, process);
+        // ðŸ”¹ Kirim ke Camunda
+        const responseCamunda = await camundaConfig(
+          dataCamunda,
+          instanceId,
+          process
+        );
+        console.log(
+          "? Camunda response",
+          responseCamunda?.data || responseCamunda
+        );
 
         if (responseCamunda.status === 200 || responseCamunda.status === 204) {
-          // 🔹 Simpan log ke GraphQL
+          // ðŸ”¹ Simpan log ke GraphQL
           const dataQuery = {
             graph: {
               method: "mutate",
@@ -47,7 +71,7 @@ const eventHandlers = {
                   $created_at: timestamp!,
                   $created_by: String!,
                   $delivery_staging_id: Int!,
-                  $quantity_input: Int!,
+                  $quantity_input: float8!,
                   $task_def_key: String!
                 ) {
                   insert_delivery_staging_logs(
@@ -67,29 +91,31 @@ const eventHandlers = {
                 created_at: item.created_at,
                 created_by: item.created_by,
                 delivery_staging_id: item.id,
-                quantity_input: item.quantity_input || 0,
-                task_def_key: "Mirorim_Warehouse.Generic_Staging.Input_Quantity_Staging",
+                quantity_input: item.convert_quantity_input || 0,
+                task_def_key:
+                  "Mirorim_Warehouse.Generic_Staging.Input_Quantity_Staging",
               },
             },
             query: [],
           };
 
           const responseQuery = await configureQuery(null, dataQuery);
+          console.log("responseQuery", JSON.stringify(responseQuery, null, 2));
 
           results.push({
-            message: "✅ Complete event processed successfully",
+            message: "âœ… Complete event processed successfully",
             camunda_status: responseCamunda.status,
             camunda_data: responseCamunda.data,
             graphql_data: responseQuery.data,
           });
         } else {
           results.push({
-            message: "⚠️ Camunda did not return success status",
+            message: "âš ï¸ Camunda did not return success status",
             status: responseCamunda.status,
           });
         }
       } catch (error) {
-        console.error("❌ Error executing handler:", error.message);
+        console.error("âŒ Error executing handler:", error.message);
         results.push({
           message: "Error processing item",
           error: error.message,
@@ -106,7 +132,7 @@ const eventHandlers = {
   },
 };
 
-// 🔹 Fungsi utama
+// ðŸ”¹ Fungsi utama
 const handle = async (eventData) => {
   const { eventKey, data, process } = eventData;
 
@@ -117,7 +143,7 @@ const handle = async (eventData) => {
   try {
     return await eventHandlers[eventKey](data, process);
   } catch (error) {
-    console.error(`❌ Error executing handler for event: ${eventKey}`, error);
+    console.error(`âŒ Error executing handler for event: ${eventKey}`, error);
     throw error;
   }
 };

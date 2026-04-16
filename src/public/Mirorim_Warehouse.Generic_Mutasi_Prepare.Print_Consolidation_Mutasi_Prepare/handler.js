@@ -35,23 +35,27 @@ const eventHandlers = {
 
         console.log(description);
         
-        let destinationTypeTable;
-            if (description === "GUDANG") {
-              destinationTypeTable = "Wholesale";
-            } else if (description === "TOKO") {
-              destinationTypeTable = "Retail";
-            } else {
-              destinationTypeTable = description || "Unknown";
-            }
+let destinationTypeTable;
+if (description === "REJECT" || description === "RE") {
+  destinationTypeTable = "Reject";
+} else if (description === "GUDANG") {
+  destinationTypeTable = "Wholesale";
+} else if (description === "TOKO") {
+  destinationTypeTable = "Retail";
+} else {
+  destinationTypeTable = description || "Unknown";
+}
 
-            let coordinator;
-            if (description === "GUDANG") {
-              coordinator = "InventoryWholesaleCoordinator";
-            } else if (description === "TOKO") {
-              coordinator = "InventoryRetailCoordinator";
-            } else {
-              coordinator = "InventoryRetailCoordinator" || "Unknown";
-            }
+let coordinator;
+if (description === "REJECT" || description === "RE") {
+  coordinator = "InventoryRejectCoordinator";
+} else if (description === "GUDANG") {
+  coordinator = "InventoryWholesaleCoordinator";
+} else if (description === "TOKO") {
+  coordinator = "InventoryRetailCoordinator";
+} else {
+  coordinator = "InventoryRetailCoordinator" || "Unknown";
+}
 
         // Tentukan WIPLocation
         let WIPLocation;
@@ -75,7 +79,6 @@ const eventHandlers = {
               variables: {
                   coordinator: { value: coordinator, type: "String" },
                   id: { value: item.id, type: "Integer" },
-                  source_stock: { value: item.stock_item_wip, type: "Integer" },
                   unique_trx: { value: item.unique_trx, type: "String" },
                   business_key: { value: item.unique_trx, type: "String" },
                   table_reference: { value: "internal_consolidation_process", type: "String" },

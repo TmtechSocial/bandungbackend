@@ -35,23 +35,22 @@ const eventHandlers = {
                 );
               }
         
-        // const dataCamunda = {
-        //   type: "complete",
-        //   endpoint: `/engine-rest/task/{taskId}/complete`,
-        //   instance: item.parent_inst_id,
-        //   variables: {
-        //     variables: {
-        //     },
-        //   },
-        // };
+        const dataCamunda = {
+           type: "complete",
+           endpoint: `/engine-rest/task/{taskId}/complete`,
+           instance: item.parent_inst_id,
+           variables: {
+             variables: {
+            },
+          },
+         };
 
-        // const responseCamunda = await camundaConfig(
-        //   dataCamunda,
-        //   instanceId,
-        //   process
-        // );
-        // if (responseCamunda.status === 200 || responseCamunda.status === 204) {
-        if (item) {
+         const responseCamunda = await camundaConfig(
+           dataCamunda,
+           instanceId,
+           process
+         );
+         if (responseCamunda.status === 200 || responseCamunda.status === 204) {
 
           if (item.status == "Ya, Follow Up Supplier") {
           dataQuery = {
@@ -113,7 +112,7 @@ const eventHandlers = {
 
           results.push({
             message: "Create event processed successfully",
-            // camunda: responseCamunda.data,
+             camunda: responseCamunda.data,
             database: responseQuery.data,
           });
         }

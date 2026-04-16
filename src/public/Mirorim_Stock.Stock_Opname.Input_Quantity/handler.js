@@ -29,12 +29,12 @@ const eventHandlers = {
     );
 
     console.log("Calling InvenTree API:", {
-      url: `${INVENTREE_API_URL}/api/stock/`,
-      params: {
-        location: item.location_id,
-        part: item.part_id,
-      }
-    });
+  url: `${INVENTREE_API_URL}/api/stock/`,
+  params: {
+    location: item.location_id,
+    part: item.part_id,
+  }
+});
 
     const stockItems = inventreeResponse.data?.results || [];
     const quantity_system = stockItems.reduce(
@@ -107,7 +107,7 @@ const eventHandlers = {
                 proc_inst_id: item.proc_inst_id,
                 quantity_input: item.quantity_counted,
                 user: item.user,
-                status: item.quantity_counted === quantity_system ? "Finish" : "Needs Review",
+                status: item.tolerance_valid ? "Finish" : "Needs Review",
                 task_def_key: "Mirorim_Stock.Stock_Opname.Input_Quantity",
                 created_at: new Date(
                   new Date().getTime() + 7 * 60 * 60 * 1000
@@ -117,7 +117,7 @@ const eventHandlers = {
             },
             query: [],
           };
-          
+
           const responseQuery = await configureQuery(fastify, dataQuery);
 
           results.push({

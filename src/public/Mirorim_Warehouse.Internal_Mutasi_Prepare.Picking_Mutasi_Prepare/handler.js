@@ -2,8 +2,10 @@ const { Source } = require("graphql");
 const { configureQuery } = require("../../controller/controllerConfig");
 const camundaConfig = require("../../utils/camunda/camundaConfig");
 const {
+  trackStock,
   transferStock,
   getDescStock,
+  createStockTransferEqual
 } = require("../../utils/inventree/inventreeActions");
 const fastify = require("fastify");
 const axios = require("axios");
@@ -17,36 +19,68 @@ const eventHandlers = {
       try {
         const instanceId = item.proc_inst_id || null;
         let dataCamunda = null;
-        let stockGetDesc = null;
+        let stockGetDesc = [];
 
-        // Jika bukan print ulang → lakukan transfer stock dan ambil desc stock
+        // Jika bukan print ulang ? lakukan transfer stock dan ambil desc stock
         if (!item.printUlang) {
           const partPk = item.part_id;
           const locationPk = 6225;
           const stockPk = item.source_id;
           const quantity = item.quantity_staging;
+          let primary_stock = null;
 
           const notesTransfer = `Transfer stock WIP In Transit ${instanceId}`;
 
           console.log("source_id:", stockPk);
-
-          const stockTransfer = await transferStock(
-            stockPk,
-            quantity,
-            locationPk,
-            notesTransfer
-          );
-          stockGetDesc = await getDescStock(partPk, locationPk);
-
-          const stockTransfer = await transferStock(
-            stockPk,
-            quantity,
-            locationPk,
-            notesTransfer
-          );
-          stockGetDesc = await getDescStock(partPk, locationPk);
-          console.log("stockGetDesc:", stockGetDesc);
-
+          let sourceId = [];
+          let quantityInput = [];
+          for (const product of item.products || []) {
+                quantityInput.push(product.quantity_pick);
+                const partPk = item.part_id;
+                const locationPk = 6225;
+                const stockPk = product.mrd_source_id;
+                const quantity = product.quantity_pick;
+                const sku = product.location_id;
+                const notesTransfer = `Transfer stock WIP In Transit ${instanceId} | From SKU: ${sku}`;
+                const stockTrack = await trackStock(stockPk, notesTransfer);
+                console.log("stockTrack:", stockTrack);
+                if (stockTrack?.results?.length > 0) {
+                  console.log("Stock sudah pernah di-track, tidak remove");
+                  throw new Error(
+                    `Task sudah pernah diproses sebelumnya`
+                  );
+                }
+                console.log("source_id:", stockPk);
+                if (product.quantity_pick == product.stock_quantity) {
+                  const transferequal = await createStockTransferEqual(
+                    partPk,
+                    0,
+                    stockPk
+                  );
+                  console.log("transferequal:", transferequal);
+                  console.log("stockPk abis:", stockPk);
+                  const stockTransfer = await transferStock(
+                    stockPk,
+                    quantity,
+                    locationPk,
+                    notesTransfer
+                  );
+                  stockGetDesc.push(stockPk)
+                  sourceId.push(transferequal)
+                } else {
+                  sourceId.push(product.mrd_source_id);
+                  console.log("stockPk tidak abis:", stockPk);
+                  const stockTransfer = await transferStock(
+                    stockPk,
+                    quantity,
+                    locationPk,
+                    notesTransfer
+                  );
+                  stockGetDesc.push(await getDescStock(partPk, locationPk))
+                }
+                console.log("stockGetDesc:", stockGetDesc);
+            }
+          
           // Payload Camunda untuk mode normal
           dataCamunda = {
             type: "complete",
@@ -62,11 +96,16 @@ const eventHandlers = {
                   value: "InventoryPrepareCoordinator",
                   type: "String",
                 },
+                quantity: { value: quantityInput, type: "String" },
                 part_id: { value: item.part_id, type: "Integer" },
-                source_stock: { value: stockGetDesc, type: "Integer" },
-                primary_stock: { value: primary_stock, type: "Integer" },
+                source_stock: { value: stockGetDesc, type: "String" },
+                primary_stock: { value: sourceId, type: "String" },
                 id: { value: item.id, type: "Integer" },
                 quantity_staging: {
+                  value: item.quantity_staging,
+                  type: "Integer",
+                },
+                quantity_picking: {
                   value: item.quantity_staging,
                   type: "Integer",
                 },
@@ -100,40 +139,40 @@ const eventHandlers = {
 
         // Jika sukses, lakukan update ke Hasura (kecuali mode printUlang)
         if (responseCamunda.status === 200 || responseCamunda.status === 204) {
+          let i = 0;
           for (const product of item.products) {
             if (item.printUlang) {
-              console.log("🖨️ Mode print ulang, skip update Hasura.");
+              console.log("??? Mode print ulang, skip update Hasura.");
               continue;
             }
-
-            console.log("stockGetDesc:", stockGetDesc);
 
             const dataQuery = {
               graph: {
                 method: "mutate",
                 endpoint: GRAPHQL_API,
                 gqlQuery: `
-                  mutation UpdateMutasi($request_id: Int!, $source_id: String!, $stock_id: String!, $user: String!, $date: timestamp!, $quantity_pick: Int!, $quantity_fisik: Int!, $quantity_data: Int!, $proc_inst_id: String!, $status: String!, $evidence_picking: String!) {
+                  mutation UpdateMutasi($request_id: Int!, $source_id: String!, $stock_id: String!, $user: String!, $date: timestamp!, $quantity_pick: Int!, $quantity_fisik: Int!, $quantity_data: Int!, $proc_inst_id: String!, $status: String!, $evidence_picking: String!, $quantity_staging:Int!) {
   updateDetails: update_mutasi_request_details(where: {request_id: {_eq: $request_id}, source_id: {_eq: $source_id}, type: {_eq: "source"}}, _set: {updated_by: $user, updated_at: $date, quantity: $quantity_pick, quantity_physical: $quantity_fisik, quantity_data: $quantity_data, source_id: $stock_id}) {
     affected_rows
   }
-  updateRequest: update_mutasi_request(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {quantity: $quantity_pick, status: $status, evidence_picking: $evidence_picking}) {
+  updateRequest: update_mutasi_request(where: {proc_inst_id: {_eq: $proc_inst_id}}, _set: {quantity: $quantity_staging, status: $status, evidence_picking: $evidence_picking}) {
     affected_rows
   }
 }
                 `,
                 variables: {
                   proc_inst_id: item.proc_inst_id,
-                  request_id: product.request_id,
-                  source_id: product.source_id,
-                  stock_id: String(stockGetDesc),
-                  user: item.updated_by,
-                  date: item.updated_at,
-                  quantity_pick: product.quantity_pick || 0,
-                  quantity_fisik: product.quantity_fisik || 0,
-                  quantity_data: item.quantity_data || 0,
-                  status: "Completed",
-                  evidence_picking: item.evidence[0] || "",
+                    request_id: product.id,
+                    source_id: product.mrd_source_id,
+                    stock_id: String(stockGetDesc[i] || ""),
+                    user: item.updated_by,
+                    date: item.updated_at,
+                    quantity_pick: product.quantity_pick || 0,
+                    quantity_fisik: product.quantity_fisik || 0,
+                    quantity_data: product.quantity_fisik || 0,
+                    evidence_picking: item.evidence[0] || "",
+                    quantity_staging: item.quantity_staging || 0,
+                    status: "Completed",
                 },
               },
               query: [],
@@ -143,6 +182,7 @@ const eventHandlers = {
             console.log(
               `Updated mutasi_request_details request_id ${product.request_id}`
             );
+            i++;
             console.log(responseQuery.data);
           }
 

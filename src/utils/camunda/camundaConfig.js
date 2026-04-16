@@ -74,3 +74,4 @@ async function camundaConfig(dataCamunda, instance, process) {
 }
 
 module.exports = camundaConfig;
+

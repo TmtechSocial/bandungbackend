@@ -17,93 +17,132 @@ const eventHandlers = {
       delegasiUser,
     } of data) {
       if (kegiatan == "clockOut") {
+        console.log('sini');
+        
         try {
-          const today = new Date().toISOString().split("T")[0]; // "2025-10-31"
-          // POST ke LDAP API untuk clockin
-          let ldapResult = null;
-          console.log("Clock Out Time:", clock_out);
-
-          try {
-            const ldapResponseAttaendace = await axios.post(
-              `${LDAP_API_MANAGE}/attendance/delegation-flag`,
-              { uid: id_karyawan, delegation: "false" },
-              {
-                headers: {
-                  "Content-Type": "application/json",
-                },
-              }
-            );
-            ldapResult = ldapResponseAttaendace;
-            console.log("LDAP ClockIn Response:", ldapResult.data);
-          } catch (ldapError) {
-            console.error("Error calling LDAP API:", ldapError.message);
-            ldapResult = { success: false, error: ldapError.message };
-          }
-
-          try {
-            const ldapResponse = await axios.post(
-              `${LDAP_API_MANAGE}/attendance/clockout`,
-              { uid: id_karyawan },
-              {
-                headers: {
-                  "Content-Type": "application/json",
-                },
-              }
-            );
-            ldapResult = ldapResponse;
-            console.log("LDAP ClockIn Response:", ldapResult.data);
-          } catch (ldapError) {
-            console.error("Error calling LDAP API:", ldapError.message);
-            ldapResult = { success: false, error: ldapError.message };
-          }
-
-          const dataQuery = {
+          const queryCamunda  = {
             graph: {
-              method: "mutate",
+              method: "query",
               endpoint: GRAPHQL_API,
               gqlQuery: `
-            mutation updateClockIn($clockOut: String!, $today: String!, $id_karyawan: String!) {
-              update_absen(_set: {clock_out: $clockOut}, where: {id_karyawan: {_eq: $id_karyawan}, clock_in: {_ilike: $today}}) {
-                affected_rows
-                  returning {
-                    clock_out
-                    clock_in
-                }
-              }
-            }
+            query MyQuery($id_karyawan: String!) {
+                vw_claimed_task_camunda(where: {assignee: {_eq: $id_karyawan}}) {
+                  process_instance_id
+                  business_key
+                  business_key1
+                  business_key2
+                  business_key3
+                  name
+                  task_definition_key
+                }}
             `,
               variables: {
-                id_karyawan: id_karyawan,
-                clockOut: new Date(Date.now() + 7 * 60 * 60 * 1000)
-                .toISOString()
-                .replace("T", " ")
-                .substring(0, 19),
-                today: `${today}%`,
+                id_karyawan: id_karyawan
               },
             },
             query: [],
-          };
+          }
 
-          const responseQuery = await configureQuery(fastify, dataQuery);
-                    console.log("Responseeeee GraphQL:", JSON.stringify(responseQuery.data, null, 2));  
-          console.log("!! Response GraphQL:", dataQuery.graph.variables);
+          const responseQueryClaim = await configureQuery(fastify, queryCamunda);
+          const tasks = responseQueryClaim?.data?.[0]?.graph?.vw_claimed_task_camunda || [];
 
-          const dataCamunda = {
-            type: "start",
-            endpoint: `/engine-rest/process-definition/key/HR_Management.Absensi_New/start`,
-            variables: {
-              variables: {
-                DelegasiClockout: { value: true, type: "boolean" },
-                initiatorId: { value: id_karyawan, type: "string" },
+          if (tasks.length > 0) {
+            const taskBusiness = responseQueryClaim.data[0].graph.vw_claimed_task_camunda[0].business_key1;
+            const taskDefinitionKey = responseQueryClaim.data[0].graph.vw_claimed_task_camunda[0].task_definition_key;
+            console.log("Process Instance ID:", process);
+            console.log("Task Definition Key:", taskDefinitionKey);
+            throw new Error(
+              `Anda gagal clockout, karena masih ada task "${taskDefinitionKey}" dengan business key 1"${taskBusiness}". Silakan unclaim atau selesaikan task tersebut.`
+            );
+          } else {
+
+            const today = new Date().toISOString().split("T")[0]; // "2025-10-31"
+            // POST ke LDAP API untuk clockin
+            let ldapResult = null;
+            console.log("Clock Out Time:", clock_out);
+  
+            try {
+              const ldapResponseAttaendace = await axios.post(
+                `${LDAP_API_MANAGE}/attendance/delegation-flag`,
+                { uid: id_karyawan, delegation: "false" },
+                {
+                  headers: {
+                    "Content-Type": "application/json",
+                  },
+                }
+              );
+              ldapResult = ldapResponseAttaendace;
+              console.log("LDAP ClockIn Response:", ldapResult.data);
+            } catch (ldapError) {
+              console.error("Error calling LDAP API:", ldapError.message);
+              ldapResult = { success: false, error: ldapError.message };
+            }
+  
+            try {
+              const ldapResponse = await axios.post(
+                `${LDAP_API_MANAGE}/attendance/clockout`,
+                { uid: id_karyawan },
+                {
+                  headers: {
+                    "Content-Type": "application/json",
+                  },
+                }
+              );
+              ldapResult = ldapResponse;
+              console.log("LDAP ClockIn Response:", ldapResult.data);
+            } catch (ldapError) {
+              console.error("Error calling LDAP API:", ldapError.message);
+              ldapResult = { success: false, error: ldapError.message };
+            }
+  
+            const dataQuery = {
+              graph: {
+                method: "mutate",
+                endpoint: GRAPHQL_API,
+                gqlQuery: `
+              mutation updateClockIn($clockOut: String!, $today: String!, $id_karyawan: String!) {
+                update_absen(_set: {clock_out: $clockOut}, where: {id_karyawan: {_eq: $id_karyawan}, clock_in: {_ilike: $today}}) {
+                  affected_rows
+                    returning {
+                      clock_out
+                      clock_in
+                  }
+                }
+              }
+              `,
+                variables: {
+                  id_karyawan: id_karyawan,
+                  clockOut: new Date(Date.now() + 7 * 60 * 60 * 1000)
+                  .toISOString()
+                  .replace("T", " ")
+                  .substring(0, 19),
+                  today: `${today}%`,
+                },
               },
-            },
-          };
-
-          const responseCamunda = await camundaConfig(dataCamunda, process);
-          console.log("Response Camunda:", responseCamunda);
+              query: [],
+            };
+  
+            const responseQuery = await configureQuery(fastify, dataQuery);
+                      console.log("Responseeeee GraphQL:", JSON.stringify(responseQuery.data, null, 2));  
+            console.log("!! Response GraphQL:", dataQuery.graph.variables);
+  
+            const dataCamunda = {
+              type: "start",
+              endpoint: `/engine-rest/process-definition/key/HR_Management.Absensi_New/start`,
+              variables: {
+                variables: {
+                  DelegasiClockout: { value: true, type: "boolean" },
+                  initiatorId: { value: id_karyawan, type: "string" },
+                },
+              },
+            };
+  
+            const responseCamunda = await camundaConfig(dataCamunda, process);
+            console.log("Response Camunda:", responseCamunda);
+          }
         } catch (error) {
           console.error(
-            `Error executing handler for event: ${eventKey}`,
+            `Error executing handler for event:`,
             error
           );
           throw error;
@@ -258,105 +297,141 @@ const eventHandlers = {
       if (aksi == "delegasiDanClockout") {
         console.log("🔄 Delegasi dan Clockout logic here - DELEGATION FIRST");
         try {
-          // ==================== PHASE 1: DELEGATION ====================
-          console.log("📋 PHASE 1: Starting Delegation Process...");
-
-          // Step 1: Get user DN from LDAP for delegated user (User B)
-          const userUrl = `${LDAP_API_MANAGE}/users/${delegasiUser}`;
-          console.log(`Fetching user DN for uid: ${delegasiUser}`);
-          const userResponse = await axios.get(userUrl);
-          const userDn = userResponse.data.dn;
-          console.log(`✅ User B DN retrieved: ${userDn}`);
-
-          // Step 2: Get current user DN from LDAP (User A yang mendelegasikan)
-          const currentUserUrl = `${LDAP_API_MANAGE}/users/${id_karyawan}`;
-          console.log(`Fetching current user DN for uid: ${id_karyawan}`);
-          const currentUserResponse = await axios.get(currentUserUrl);
-          const currentUserDn = currentUserResponse.data.dn;
-          console.log(`✅ User A DN retrieved: ${currentUserDn}`);
-
-          // Step 3: Remove current user (User A) from their group FIRST
-          const removeCurrentUserUrl = `${LDAP_API_MANAGE}/groups/${cnFromDn}/memberuid`;
-          const removeCurrentUserBody = {
-            memberUid: currentUserDn,
-          };
-
-          console.log(
-            `🔻 Removing User A (${id_karyawan}) from group ${cnFromDn}`
-          );
-          await axios.delete(removeCurrentUserUrl, {
-            data: removeCurrentUserBody,
-          });
-          console.log(`✅ Successfully removed User A from group ${cnFromDn}`);
-
-          // Step 4: Delete User B from all previous groups
-          if (
-            data[0].groupSebelumnya &&
-            Array.isArray(data[0].groupSebelumnya)
-          ) {
-            console.log(`🧹 Cleaning User B from previous groups...`);
-            for (const group of data[0].groupSebelumnya) {
-              const groupCn = group.groupName || group.cn || group;
-              const deleteUrl = `${LDAP_API_MANAGE}/groups/${groupCn}/memberuid`;
-              const deleteBody = {
-                memberUid: userDn,
-              };
-
-              console.log(
-                `🔻 Deleting User B (${delegasiUser}) from group ${groupCn}`
-              );
-              try {
-                await axios.delete(deleteUrl, { data: deleteBody });
-                console.log(
-                  `✅ Successfully removed User B from group ${groupCn}`
-                );
-              } catch (deleteError) {
-                console.error(
-                  `⚠️ Error removing User B from group ${groupCn}:`,
-                  deleteError.message
-                );
-                // Continue with other groups even if one fails
-              }
-            }
+          const queryCamunda  = {
+            graph: {
+              method: "query",
+              endpoint: GRAPHQL_API,
+              gqlQuery: `
+            query MyQuery($id_karyawan: String!) {
+                vw_claimed_task_camunda(where: {assignee: {_eq: $id_karyawan}}) {
+                  process_instance_id
+                  business_key
+                  business_key1
+                  business_key2
+                  business_key3
+                  name
+                  task_definition_key
+                }}
+            `,
+              variables: {
+                id_karyawan: id_karyawan
+              },
+            },
+            query: [],
           }
 
-          // Step 5: Add User B to new group (menggantikan User A)
-          const addUrl = `${LDAP_API_MANAGE}/groups/${cnFromDn}/memberuid`;
-          const addBody = {
-            memberUid: userDn,
-          };
+          const responseQueryClaim = await configureQuery(fastify, queryCamunda);
+          const tasks = responseQueryClaim?.data?.[0]?.graph?.vw_claimed_task_camunda || [];
 
-          console.log(
-            `➕ Adding User B (${delegasiUser}) to group ${cnFromDn}`
-          );
-          const addResponse = await axios.post(addUrl, addBody);
-          console.log(
-            `✅ Successfully added User B to group ${cnFromDn}:`,
-            addResponse.data
-          );
+          if (tasks.length > 0) {
+            const taskBusiness = responseQueryClaim.data[0].graph.vw_claimed_task_camunda[0].business_key1;
+            const taskDefinitionKey = responseQueryClaim.data[0].graph.vw_claimed_task_camunda[0].task_definition_key;
+            console.log("Process Instance ID:", process);
+            console.log("Task Definition Key:", taskDefinitionKey);
+            throw new Error(
+              `Anda gagal delegasi dan clockout, karena masih ada task "${taskDefinitionKey}" dengan business key 1"${taskBusiness}". Silakan unclaim atau selesaikan task tersebut.`
+            );
+          }else {
 
-          // Step 6: Add flag delegation for User B
-          const addFlagUrl = `${LDAP_API_MANAGE}/attendance/delegation-flag`;
-          const addFlagBody = {
-            uid: delegasiUser,
-            delegation: "true",
-          };
+            // ==================== PHASE 1: DELEGATION ====================
+            console.log("📋 PHASE 1: Starting Delegation Process...");
+            
+            // Step 1: Get user DN from LDAP for delegated user (User B)
+            const userUrl = `${LDAP_API_MANAGE}/users/${delegasiUser}`;
+            console.log(`Fetching user DN for uid: ${delegasiUser}`);
+            const userResponse = await axios.get(userUrl);
+            const userDn = userResponse.data.dn;
+            console.log(`✅ User B DN retrieved: ${userDn}`);
+            
+            // Step 2: Get current user DN from LDAP (User A yang mendelegasikan)
+            const currentUserUrl = `${LDAP_API_MANAGE}/users/${id_karyawan}`;
+            console.log(`Fetching current user DN for uid: ${id_karyawan}`);
+            const currentUserResponse = await axios.get(currentUserUrl);
+            const currentUserDn = currentUserResponse.data.dn;
+            console.log(`✅ User A DN retrieved: ${currentUserDn}`);
+            
+            // Step 3: Remove current user (User A) from their group FIRST
+            const removeCurrentUserUrl = `${LDAP_API_MANAGE}/groups/${cnFromDn}/memberuid`;
+            const removeCurrentUserBody = {
+              memberUid: currentUserDn,
+            };
+            
+            console.log(
+              `🔻 Removing User A (${id_karyawan}) from group ${cnFromDn}`
+            );
+            await axios.delete(removeCurrentUserUrl, {
+              data: removeCurrentUserBody,
+            });
+            console.log(`✅ Successfully removed User A from group ${cnFromDn}`);
+            
+            // Step 4: Delete User B from all previous groups
+            if (
+              data[0].groupSebelumnya &&
+              Array.isArray(data[0].groupSebelumnya)
+            ) {
+              console.log(`🧹 Cleaning User B from previous groups...`);
+              for (const group of data[0].groupSebelumnya) {
+                const groupCn = group.groupName || group.cn || group;
+                const deleteUrl = `${LDAP_API_MANAGE}/groups/${groupCn}/memberuid`;
+                const deleteBody = {
+                  memberUid: userDn,
+                };
+                
+                console.log(
+                  `🔻 Deleting User B (${delegasiUser}) from group ${groupCn}`
+                );
+                try {
+                  await axios.delete(deleteUrl, { data: deleteBody });
+                  console.log(
+                    `✅ Successfully removed User B from group ${groupCn}`
+                  );
+                } catch (deleteError) {
+                  console.error(
+                    `⚠️ Error removing User B from group ${groupCn}:`,
+                    deleteError.message
+                  );
+                  // Continue with other groups even if one fails
+                }
+              }
+            }
+            
+            // Step 5: Add User B to new group (menggantikan User A)
+            const addUrl = `${LDAP_API_MANAGE}/groups/${cnFromDn}/memberuid`;
+            const addBody = {
+              memberUid: userDn,
+            };
+            
+            console.log(
+              `➕ Adding User B (${delegasiUser}) to group ${cnFromDn}`
+            );
+            const addResponse = await axios.post(addUrl, addBody);
+            console.log(
+              `✅ Successfully added User B to group ${cnFromDn}:`,
+              addResponse.data
+            );
+            
+            // Step 6: Add flag delegation for User B
+            const addFlagUrl = `${LDAP_API_MANAGE}/attendance/delegation-flag`;
+            const addFlagBody = {
+              uid: delegasiUser,
+              delegation: "true",
+            };
+            
+            console.log(`🚩 Adding delegation flag for User B (${delegasiUser})`);
+            const addFlagResponse = await axios.post(addFlagUrl, addFlagBody);
+            console.log(
+              `✅ Successfully added delegation flag for User B:`,
+              addFlagResponse.data
+            );
+            
+            // Step 7: Remove flag delegation for User A
+            const removeFlagUrl = `${LDAP_API_MANAGE}/attendance/delegation-flag`;
+            const removeFlagBody = {
+              uid: id_karyawan,
+              delegation: "false",
+            };
 
-          console.log(`🚩 Adding delegation flag for User B (${delegasiUser})`);
-          const addFlagResponse = await axios.post(addFlagUrl, addFlagBody);
-          console.log(
-            `✅ Successfully added delegation flag for User B:`,
-            addFlagResponse.data
-          );
-
-          // Step 7: Remove flag delegation for User A
-          const removeFlagUrl = `${LDAP_API_MANAGE}/attendance/delegation-flag`;
-          const removeFlagBody = {
-            uid: id_karyawan,
-            delegation: "false",
-          };
-
-          console.log(
+            console.log(
             `🚩 Removing delegation flag for User A (${id_karyawan})`
           );
           const removeFlagResponse = await axios.post(
@@ -369,10 +444,10 @@ const eventHandlers = {
           );
 
           console.log("✅ PHASE 1: Delegation Completed Successfully!");
-
+          
           // ==================== PHASE 2: CLOCKOUT ====================
           console.log("🕐 PHASE 2: Starting Clockout Process...");
-
+          
           // Step 8: POST ke LDAP API untuk clockout
           let ldapClockoutResult = null;
           try {
@@ -395,7 +470,7 @@ const eventHandlers = {
             // Jangan throw error, clockout tetap lanjut ke database
             ldapClockoutResult = { success: false, error: ldapError.message };
           }
-
+          
           // Step 9: Update database - Perform clock out
           const today = new Date().toISOString().split("T")[0];
           const dataQuery = {
@@ -403,54 +478,55 @@ const eventHandlers = {
               method: "mutate",
               endpoint: GRAPHQL_API,
               gqlQuery: `
-            mutation updateClockIn($clock_out: String!, $today: String!, $_eq: String = "") {
-              update_absen(_set: {clock_out: $clock_out}, where: {id_karyawan: {_eq: $_eq}, clock_in: {_like: $today}}) {
-                affected_rows
-              }
-            }
-            `,
-              variables: {
-                _eq: id_karyawan,
-                clock_out: new Date(Date.now() + 7 * 60 * 60 * 1000)
-                .toISOString()
-                .replace("T", " ")
-                .substring(0, 19),
-                today: `${today}%`,
-              },
-            },
-            query: [],
-          };
-
-          const responseQuery = await configureQuery(fastify, dataQuery);
-          console.log(
-            "✅ GraphQL Clock Out Response:",
-            responseQuery.data[0].graph
-          );
-
-          console.log("✅ PHASE 2: Clockout Completed Successfully!");
-
-          // ==================== PHASE 3: COMPLETE CAMUNDA ====================
-          console.log("🎯 PHASE 3: Completing Camunda Process...");
-
-          const dataCamunda = {
-            type: "start",
-            endpoint: `/engine-rest/process-definition/key/HR_Management.Absensi_New/start`,
-            variables: {
-              variables: {
-                DelegasiClockout: { value: true, type: "boolean" },
-                initiatorId: { value: id_karyawan, type: "string" },
-              },
-            },
-          };
-
-          const responseCamunda = await camundaConfig(dataCamunda, process);
-          console.log("✅ Camunda Process Started:", responseCamunda);
-
-          console.log("🎉 ALL PHASES COMPLETED SUCCESSFULLY!");
-
-          results.push({
-            camunda: responseCamunda.data,
-          });
+              mutation updateClockIn($clock_out: String!, $today: String!, $_eq: String = "") {
+                update_absen(_set: {clock_out: $clock_out}, where: {id_karyawan: {_eq: $_eq}, clock_in: {_like: $today}}) {
+                  affected_rows
+                  }
+                  }
+                  `,
+                  variables: {
+                    _eq: id_karyawan,
+                    clock_out: new Date(Date.now() + 7 * 60 * 60 * 1000)
+                    .toISOString()
+                    .replace("T", " ")
+                    .substring(0, 19),
+                    today: `${today}%`,
+                  },
+                },
+                query: [],
+              };
+              
+              const responseQuery = await configureQuery(fastify, dataQuery);
+              console.log(
+                "✅ GraphQL Clock Out Response:",
+                responseQuery.data[0].graph
+              );
+              
+              console.log("✅ PHASE 2: Clockout Completed Successfully!");
+              
+              // ==================== PHASE 3: COMPLETE CAMUNDA ====================
+              console.log("🎯 PHASE 3: Completing Camunda Process...");
+              
+              const dataCamunda = {
+                type: "start",
+                endpoint: `/engine-rest/process-definition/key/HR_Management.Absensi_New/start`,
+                variables: {
+                  variables: {
+                    DelegasiClockout: { value: true, type: "boolean" },
+                    initiatorId: { value: id_karyawan, type: "string" },
+                  },
+                },
+              };
+              
+              const responseCamunda = await camundaConfig(dataCamunda, process);
+              console.log("✅ Camunda Process Started:", responseCamunda);
+              
+              console.log("🎉 ALL PHASES COMPLETED SUCCESSFULLY!");
+              
+              results.push({
+                camunda: responseCamunda.data,
+              });
+          }
         } catch (error) {
           console.error("❌ Error in delegasiDanClockout:", error);
           console.error("❌ Error details:", error.stack);

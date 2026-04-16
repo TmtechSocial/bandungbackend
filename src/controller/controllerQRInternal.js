@@ -3,12 +3,31 @@ require("dotenv").config();
 const { Client } = require("pg");
 const { DB_USER, DB_PASSWORD, DB_HOST, DB_PORT } = process.env;
 const { fetchCamundaTasksByProcInstId } = require("./camundaTaskApi");
+const { fetchUserGroups } = require("../utils/camunda/camundaUserGroups");
 const groupTaskMap = require("./groupTaskMap");
 
 async function checkQRInternal(fastify, input, groups, userId) {
   const connectionString = `postgres://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/camunda`;
   const client = new Client({ connectionString });
-
+  let groupIds = [];
+  try {
+    const groups = await fetchUserGroups(userId);
+    if (Array.isArray(groups) && groups.length > 0) {   
+      groupIds = groups.map((g) => g.id);
+    } else {
+      console.log(
+        `No Camunda groups found for user ${userId}; using empty group list`
+      );
+      groupIds = [];
+    }
+  } catch (err) {
+    console.error(
+      `Error fetching groups for ${userId}:`,
+      err.message || err
+    );
+    // Fallback to empty array so query still runs but won't match any group_id_
+    groupIds = [];
+  }
   try {
     await client.connect();
 
@@ -18,7 +37,7 @@ async function checkQRInternal(fastify, input, groups, userId) {
         SELECT act_ru_variable.proc_inst_id_ AS instance, task_def_key_ AS process FROM public.act_ru_variable
 inner join act_hi_procinst on act_hi_procinst.proc_inst_id_ = act_ru_variable.proc_inst_id_ 
 inner join act_ru_task art on art.proc_inst_id_ = act_hi_procinst.proc_inst_id_
-where act_ru_variable.name_ = 'unique_trx' and text_ = $1
+where act_ru_variable.name_ = 'unique_trx' and text_ = $1 and task_def_key_ not like '%Konfigurasi_Product%'
 order by act_hi_procinst.start_time_ desc limit 1
 
       `;
@@ -42,8 +61,8 @@ order by act_hi_procinst.start_time_ desc limit 1
 
     // Buat list task_def_key yang boleh diambil oleh group
     let allowedTaskDefKeys = [];
-    if (Array.isArray(groups)) {
-      groups.forEach(group => {
+    if (Array.isArray(groupIds)) {
+      groupIds.forEach(group => {
         const groupName = group.name || group; // Handle both object and string format
         //console.log(`Processing group: ${groupName}, taskMap entry:`, groupTaskMap[groupName]);
         if (groupTaskMap[groupName]) {

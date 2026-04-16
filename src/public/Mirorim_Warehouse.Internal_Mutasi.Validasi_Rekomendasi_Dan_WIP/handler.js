@@ -20,7 +20,8 @@ const inventree = axios.create({
 const eventHandlers = {
   async onSubmit(data, process) {
     const results = [];
-
+    console.log("?? Handling onSubmit event with data:", data);
+    console.log("?? Handling onSubmit event with products:", data[0].products);
     for (const item of data) {
       try {
         let destinationTypeTable = "Unknown";
@@ -29,7 +30,7 @@ const eventHandlers = {
         for (const product of item.products) {
           try {
             // Ambil stok dari Inventree
-            const source_stock_item = product.source_sku || 17300;
+            const source_stock_item = product.source_sku;
             const stockRes = await inventree.get(
               `/stock/${source_stock_item}/`
             );
@@ -45,7 +46,7 @@ const eventHandlers = {
               sourceRes.data?.results?.[0]?.description || null;
 
             // Ambil deskripsi lokasi tujuan
-            const locationDestinationName = product.location_id;
+            const locationDestinationName = item.location_id;
             const destinationRes = await inventree.get(
               `/stock/location/?name=${locationDestinationName}`
             );
@@ -68,8 +69,8 @@ const eventHandlers = {
             if (sourceTypeTable === "Unknown")
               sourceTypeTable = mappedSourceType;
 
-            console.log("testtttt",destinationTypeTable, sourceTypeTable);
-            
+            console.log("testtttt", destinationTypeTable, sourceTypeTable);
+
             // Simpan info ke produk
             product.source_location_name = locationName;
             product.available_stock = stockQty;
@@ -84,7 +85,7 @@ const eventHandlers = {
               );
             }
           } catch (err) {
-            console.error("❌ Error checking product stock:", err.message);
+            console.error("? Error checking product stock:", err.message);
             product.source_location_name = "UnknownLocation";
             product.destination_location_name = "UnknownLocation";
             throw new Error(err.message);
@@ -110,11 +111,8 @@ const eventHandlers = {
         };
 
         const createdDate = formatDateYYMMDD(item.created_at || new Date());
-        const locationDestinationName =
-          item.products?.[0]?.location_id || 0;
-        const unique_id = `IM|${createdDate}|${locationDestinationName}|`;
-        const firstProduct = item.products[0];
-        const source_stock_item = firstProduct?.source_sku || 0;
+        const locationDestinationName = item.location_id;
+        const source_stock_items = item.products.map(p => p.source_sku).join(',');
 
         // --- 3. Complete task di Camunda ---
         const dataCamunda = {
@@ -124,18 +122,18 @@ const eventHandlers = {
           variables: {
             variables: {
               Rekomendasi_Valid: { value: item.valid, type: "boolean" },
-              destination_type: { value: destinationTypeTable, type: "String"},
-              source_type: { value: sourceTypeTable, type: "String"},
-              destination_location_name: { value: locationDestinationName, type: "String"},
-              source_stock: { value: source_stock_item, type: "Integer"},
-              unique_trx: { value: item.unique_trx, type: "String"},
-              business_key: { value: item.unique_trx, type: "String"}
+              destination_type: { value: destinationTypeTable, type: "String" },
+              source_type: { value: sourceTypeTable, type: "String" },
+              destination_location_name: { value: locationDestinationName, type: "String" },
+              source_stock: { value: `[${source_stock_items}]`, type: "String" },
+              unique_trx: { value: item.unique_trx, type: "String" },
+              business_key: { value: item.unique_trx, type: "String" }
             },
           },
         };
 
         const responseCamunda = await camundaConfig(dataCamunda, item.proc_inst_id, process);
-        console.log("✅ Camunda response:", responseCamunda.status);
+        console.log("? Camunda response:", responseCamunda.status);
 
         if (![200, 204].includes(responseCamunda.status)) continue;
 
@@ -182,74 +180,75 @@ const eventHandlers = {
         };
 
         const responseQuery = await configureQuery(fastify, dataQuery);
-        console.log("✅ Update query response:", JSON.stringify(responseQuery)); 
+        console.log("? Update query response:", JSON.stringify(responseQuery));
 
         // --- 5. Insert mutasi_request_details (source) ---
-        const dataQueryDetails = item.products.map((product) => ({
-          graph: {
-            method: "mutate",
-            endpoint: GRAPHQL_API,
-            gqlQuery: `
-              mutation insertMutasiDetail(
-                $request_id: Int!,
-                $type: String!,
-                $location_id: String!,
-                $source_id: String!,
-                $quantity: Int!,
-                $updated_at: timestamp!,
-                $created_at: timestamp!,
-                $created_by: String!,
-                $updated_by: String!
-              ) {
-                insert_mutasi_request_details(objects: {
-                  request_id: $request_id,
-                  type: $type,
-                  location_id: $location_id,
-                  source_id: $source_id,
-                  quantity: $quantity,
-                  updated_at: $updated_at,
-                  created_at: $created_at,
-                  created_by: $created_by,
-                  updated_by: $updated_by
-                }) { affected_rows }
-              }
-            `,
-            variables: {
-              request_id: item.id,
-              type: "source",
-              location_id: product.source_location_name || "WH001",
-              source_id: String(product.source_sku),
-              quantity: product.quantity,
-              updated_at: item.created_at || new Date().toISOString(),
-              created_at: item.created_at || new Date().toISOString(),
-              created_by: item.user || "Unknown",
-              updated_by: item.user || "Unknown",
-            },
-          },
-          query: [],
-        }));
+        console.log(`?? Inserting ${item.products.length} source details...`);
 
-        await Promise.all(
-          [...dataQueryDetails].map(async (q) => {
-            try {
-              const res = await configureQuery(fastify, q);
-              const bodyJson = res.body ? JSON.parse(res.body) : res.data;
+        for (const product of item.products) {
+          try {
+            const sourceDetailData = {
+              graph: {
+                method: "mutate",
+                endpoint: GRAPHQL_API,
+                gqlQuery: `
+                  mutation insertMutasiDetail(
+                    $request_id: Int!,
+                    $type: String!,
+                    $location_id: String!,
+                    $source_id: String!,
+                    $quantity: Int!,
+                    $updated_at: timestamp!,
+                    $created_at: timestamp!,
+                    $created_by: String!,
+                    $updated_by: String!
+                  ) {
+                    insert_mutasi_request_details(objects: {
+                      request_id: $request_id,
+                      type: $type,
+                      location_id: $location_id,
+                      source_id: $source_id,
+                      quantity: $quantity,
+                      updated_at: $updated_at,
+                      created_at: $created_at,
+                      created_by: $created_by,
+                      updated_by: $updated_by
+                    }) { affected_rows }
+                  }
+                `,
+                variables: {
+                  request_id: item.id,
+                  type: "source",
+                  location_id: product.source_location_name || "WH001",
+                  source_id: String(product.source_sku),
+                  quantity: product.quantity,
+                  updated_at: item.created_at || new Date().toISOString(),
+                  created_at: item.created_at || new Date().toISOString(),
+                  created_by: item.user || "Unknown",
+                  updated_by: item.user || "Unknown",
+                },
+              },
+              query: [],
+            };
 
-              if (bodyJson.errors) {
-                console.error("❌ GraphQL errors:", bodyJson.errors);
-                return null;
-              }
+            console.log(`  ?? Inserting source: SKU=${product.source_sku}, Location=${product.source_location_name}, Qty=${product.quantity}`);
 
-              return (
-                bodyJson.data?.insert_mutasi_request_details?.affected_rows ||
-                null
-              );
-            } catch (err) {
-              console.error("❌ Insert mutation error:", err.message);
-              return null;
+            const res = await configureQuery(fastify, sourceDetailData);
+            const bodyJson = res.body ? JSON.parse(res.body) : res.data;
+
+            if (bodyJson.errors) {
+              console.error("? GraphQL errors:", bodyJson.errors);
+              throw new Error(`Failed to insert source detail for SKU ${product.source_sku}`);
             }
-          })
-        );
+
+            const affectedRows = bodyJson.data?.insert_mutasi_request_details?.affected_rows || 0;
+            console.log(`  ? Inserted ${affectedRows} row(s) for SKU ${product.source_sku}`);
+
+          } catch (err) {
+            console.error(`? Insert mutation error for SKU ${product.source_sku}:`, err.message);
+            throw err;
+          }
+        }
 
         results.push({ message: "Save event processed successfully" });
       } catch (error) {
@@ -264,7 +263,7 @@ const eventHandlers = {
   },
 
   async onChange(data) {
-    console.log("🔄 Handling onChange:", data);
+    console.log("?? Handling onChange:", data);
     return { message: "onChange executed", data };
   },
 };

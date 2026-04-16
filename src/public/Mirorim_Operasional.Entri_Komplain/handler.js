@@ -18,6 +18,7 @@ const eventHandlers = {
           variables: {
             variables: {
               invoice: { value: item.invoice, type: "String" },
+	      alasan_komplain: { value: item.alasan_komplain, type: "String" },
               barang_kembali: {value: item.barang_kembali, type: "Boolean"},
               date_timer: { value: item.date_timer, type: "String" },
             },

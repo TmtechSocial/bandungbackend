@@ -1,20 +1,16 @@
 const { configureQuery } = require("../../controller/controllerConfig");
 const camundaConfig = require("../../utils/camunda/camundaConfig");
 const fastify = require("fastify")();
-const dotenv = require("dotenv");
 const SERVER_INVENTREE = process.env.SERVER_INVENTREE;
 const INVENTREE_API_TOKEN = process.env.INVENTREE_API_TOKEN;
 const INVENTREE_LOCATION_WIP_INBOUND = process.env.INVENTREE_LOCATION_WIP_INBOUND;
 const INVENTREE_LOCATION_WIP_RETAIL = process.env.INVENTREE_LOCATION_WIP_RETAIL;
 const INVENTREE_LOCATION_WIP_WHOLESALE = process.env.INVENTREE_LOCATION_WIP_WHOLESALE;
+const INVENTREE_LOCATION_WIP_WHOLESALED7 = process.env.INVENTREE_LOCATION_WIP_WHOLESALE_D7;
 const INVENTREE_LOCATION_WIP_REJECT = process.env.INVENTREE_LOCATION_WIP_REJECT;
-
 const axios = require("axios");
 const { transferStock } = require("../../utils/inventree/inventreeActions");
-
-dotenv.config();
 const GRAPHQL_API = process.env.GRAPHQL_API;
-
 const eventHandlers = {
   async onSubmit(data, eventKey) {
     const results = [];
@@ -29,6 +25,7 @@ const eventHandlers = {
           variables: {
             variables: {
               uniqueTrx: { value: item.unique_trx, type: "String" },
+              unique_trx: { value: item.unique_trx, type: "String" },
             },
             businessKey: `${item.unique_trx}:${item.created_at}:${item.created_by}`,
           },
@@ -85,7 +82,7 @@ const eventHandlers = {
             // Loop hasil grouping untuk buat transfer payload dan query
             for (const [typeKey, group] of Object.entries(groupedByType)) {
               
-              const locationId = group.type.toLowerCase() === "reject" ? INVENTREE_LOCATION_WIP_REJECT : group.type.toLowerCase() === "wholesale" ? INVENTREE_LOCATION_WIP_WHOLESALE : INVENTREE_LOCATION_WIP_RETAIL;
+              const locationId = group.type.toLowerCase() === "reject" ? INVENTREE_LOCATION_WIP_REJECT : group.type.toLowerCase() === "wholesale" ? INVENTREE_LOCATION_WIP_WHOLESALE : group.type.toLowerCase() === 'wholesaled7' ? INVENTREE_LOCATION_WIP_WHOLESALED7 : INVENTREE_LOCATION_WIP_RETAIL;
               const stockPk = group.type.toLowerCase() === "reject" ? stockItemIdReject : stockItemId
               const notes = `Transfer WIP Staging Inbound ${group.type}`
 

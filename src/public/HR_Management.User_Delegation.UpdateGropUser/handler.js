@@ -21,7 +21,7 @@ const eventHandlers = {
           for (const member of item.team_members) {
             userArray.push(String(member.nama));
 
-            console.log(`\n🔄 Processing user: ${member.nama}`);
+            console.log(`\n?? Processing user: ${member.nama}`);
 
             // Step 1: Ambil DN user dari LDAP
             const userResponse = await axios.get(
@@ -29,7 +29,7 @@ const eventHandlers = {
             );
             const userData = userResponse.data;
             const userDN = userData.dn;
-            console.log(`✅ User DN: ${userDN}`);
+            console.log(`? User DN: ${userDN}`);
 
             // Step 2: Ambil groups user saat ini
             const groupsResponse = await axios.get(
@@ -39,7 +39,7 @@ const eventHandlers = {
             );
             const currentGroups = groupsResponse.data.groups || [];
             console.log(
-              `📦 Current groups: ${currentGroups.map((g) => g.cn).join(", ")}`
+              `?? Current groups: ${currentGroups.map((g) => g.cn).join(", ")}`
             );
 
             if (member.employeeType === "Staff") {
@@ -50,13 +50,13 @@ const eventHandlers = {
               const afterGroup = member.updateGroupSingle || "";
 
               console.log(
-                `🔀 WORKER MOVE: ${beforeGroups.join(", ")} → ${afterGroup}`
+                `?? WORKER MOVE: ${beforeGroups.join(", ")} ? ${afterGroup}`
               );
 
               // Step 3: DELETE dari semua group yang ada (kecuali PKL dan mirorim)
               for (const group of currentGroups) {
-                if (group.cn !== "PKL" && group.cn !== "mirorim") {
-                  console.log(`🗑️ Deleting from group: ${group.cn}`);
+                if (group.cn !== "PKL" && group.cn !== "mirorim" && group.cn !== 'Internship') {
+                  console.log(`??? Deleting from group: ${group.cn}`);
                   await axios.delete(
                     `${LDAP_API_MANAGE}/groups/${group.cn}/memberuid`,
                     {
@@ -64,21 +64,21 @@ const eventHandlers = {
                       headers: { "Content-Type": "application/json" },
                     }
                   );
-                  console.log(`✅ Deleted from ${group.cn}`);
+                  console.log(`? Deleted from ${group.cn}`);
                 } else {
-                  console.log(`⏭️ Skipping ${group.cn} group`);
+                  console.log(`?? Skipping ${group.cn} group`);
                 }
               }
 
               // Step 4: POST ke group baru
               if (afterGroup) {
-                console.log(`➕ Adding to group: ${afterGroup}`);
+                console.log(`? Adding to group: ${afterGroup}`);
                 await axios.post(
                   `${LDAP_API_MANAGE}/groups/${afterGroup}/memberuid`,
                   { memberUid: userDN },
                   { headers: { "Content-Type": "application/json" } }
                 );
-                console.log(`✅ Added to ${afterGroup}`);
+                console.log(`? Added to ${afterGroup}`);
               }
 
               // Build action object untuk worker
@@ -123,16 +123,16 @@ const eventHandlers = {
                 finalGroups = [...currentGroupNames, ...groupsToAdd];
               }
 
-              console.log(`➕ Groups to ADD: ${groupsToAdd.join(", ")}`);
-              console.log(`🗑️ Groups to REMOVE: ${groupsToRemove.join(", ")}`);
+              console.log(`? Groups to ADD: ${groupsToAdd.join(", ")}`);
+              console.log(`??? Groups to REMOVE: ${groupsToRemove.join(", ")}`);
               console.log(
-                `🎯 Final groups after ${actionType}: ${finalGroups.join(", ")}`
+                `?? Final groups after ${actionType}: ${finalGroups.join(", ")}`
               );
 
               // Step 3: DELETE dari groups yang perlu dihapus (kecuali PKL dan mirorim)
               for (const groupName of groupsToRemove) {
-                if (groupName !== "PKL" && groupName !== "mirorim") {
-                  console.log(`🗑️ Removing from group: ${groupName}`);
+                if (groupName !== "PKL" && groupName !== "mirorim" && groupName !== 'Internship') {
+                  console.log(`??? Removing from group: ${groupName}`);
                   await axios.delete(
                     `${LDAP_API_MANAGE}/groups/${groupName}/memberuid`,
                     {
@@ -140,21 +140,21 @@ const eventHandlers = {
                       headers: { "Content-Type": "application/json" },
                     }
                   );
-                  console.log(`✅ Removed from ${groupName}`);
+                  console.log(`? Removed from ${groupName}`);
                 } else {
-                  console.log(`⏭️ Skipping ${groupName} group removal`);
+                  console.log(`?? Skipping ${groupName} group removal`);
                 }
               }
 
               // Step 4: POST ke groups baru (hanya yang belum ada)
               for (const groupName of groupsToAdd) {
-                console.log(`➕ Adding to group: ${groupName}`);
+                console.log(`? Adding to group: ${groupName}`);
                 await axios.post(
                   `${LDAP_API_MANAGE}/groups/${groupName}/memberuid`,
                   { memberUid: userDN },
                   { headers: { "Content-Type": "application/json" } }
                 );
-                console.log(`✅ Added to ${groupName}`);
+                console.log(`? Added to ${groupName}`);
               }
 
               // Log groups yang sudah ada sebelumnya (skip)
@@ -164,7 +164,7 @@ const eventHandlers = {
                 ).filter((g) => currentGroupNames.includes(g));
                 if (alreadyInGroups.length > 0) {
                   console.log(
-                    `ℹ️ User sudah berada di group: ${alreadyInGroups.join(
+                    `?? User sudah berada di group: ${alreadyInGroups.join(
                       ", "
                     )} (skip POST)`
                   );
@@ -182,7 +182,7 @@ const eventHandlers = {
             }
           }
 
-          console.log("\n✅ Semua proses LDAP selesai! Updating GraphQL...");
+          console.log("\n? Semua proses LDAP selesai! Updating GraphQL...");
 
           // Create date_approve (current timestamp) - UTC+7 untuk Indonesia
           const now = new Date();
@@ -213,12 +213,12 @@ const eventHandlers = {
             query: [],
           };
 
-          console.log("📊 Action Array:", JSON.stringify(actionArray, null, 2));
-          console.log("👥 User String:", userArray.join(", "));
+          console.log("?? Action Array:", JSON.stringify(actionArray, null, 2));
+          console.log("?? User String:", userArray.join(", "));
 
           const responseQuery = await configureQuery(fastify, dataQuery);
           console.log(
-            "✅ Response GraphQL Update Alokasi Resource:",
+            "? Response GraphQL Update Alokasi Resource:",
             JSON.stringify(responseQuery, null, 2)
           );
 
@@ -243,7 +243,7 @@ const eventHandlers = {
           };
 
           console.log(
-            "📊 Action Log for Camunda (System):",
+            "?? Action Log for Camunda (System):",
             JSON.stringify(actionLogForCamunda, null, 2)
           );
 
@@ -252,10 +252,10 @@ const eventHandlers = {
             item.proc_inst_id,
             process
           );
-          console.log("✅ Response Camunda:", responseCamunda);
+          console.log("? Response Camunda:", responseCamunda);
         } catch (error) {
           console.error(
-            `❌ Error executing handler for event: ${eventKey}`,
+            `? Error executing handler for event: ${eventKey}`,
             error
           );
           console.error(
@@ -277,7 +277,7 @@ const eventHandlers = {
           );
 
           console.log(
-            `📊 Total: ${item.approval_team_members?.length || 0} | Approve: ${
+            `?? Total: ${item.approval_team_members?.length || 0} | Approve: ${
               approvedMembers.length
             } | Reject: ${rejectedMembers.length}`
           );
@@ -287,7 +287,7 @@ const eventHandlers = {
 
           // Step 1: Proses yang APPROVE - kumpulkan operasi LDAP
           for (const apr of approvedMembers) {
-            console.log(`\n✅ Processing APPROVE for user: ${apr.user}`);
+            console.log(`\n? Processing APPROVE for user: ${apr.user}`);
 
             // Get DN
             const userResponse = await axios.get(
@@ -295,7 +295,7 @@ const eventHandlers = {
             );
             const userData = userResponse.data;
             const userDN = userData.dn;
-            console.log(`✅ User DN: ${userDN}`);
+            console.log(`? User DN: ${userDN}`);
 
             // Get current groups by DN
             const groupsResponse = await axios.get(
@@ -304,9 +304,10 @@ const eventHandlers = {
               )}/groups`
             );
             const actionLeder = apr.action_;
+console.log('action : ', actionLeder )
             const currentGroups = groupsResponse.data.groups || [];
             const currentGroupNames = currentGroups.map((g) => g.cn);
-            console.log(`📦 Current groups: ${currentGroupNames.join(", ")}`);
+            console.log(`?? Current groups: ${currentGroupNames.join(", ")}`);
 
             // Parse before_ and after_
             const beforeList = (apr.before_ || "")
@@ -318,8 +319,8 @@ const eventHandlers = {
               .map((s) => s.trim())
               .filter(Boolean);
 
-            console.log(`📋 Before: ${beforeList.join(", ")}`);
-            console.log(`📋 After: ${afterList.join(", ")}`);
+            console.log(`?? Before: ${beforeList.join(", ")}`);
+            console.log(`?? After: ${afterList.join(", ")}`);
 
             // ==================== PERBAIKAN LOGIKA ====================
             // Tentukan tipe aksi berdasarkan perbandingan before_ dan after_
@@ -340,7 +341,7 @@ const eventHandlers = {
                 actionType = "add";
                 groupsToAdd = afterList.filter((g) => !beforeList.includes(g));
                 groupsToRemove = [];
-                console.log(`🔵 Detected action: ADD`);
+                console.log(`?? Detected action: ADD`);
               } else {
                 // Ini adalah MOVE action (ada perubahan group)
                 actionType = "move";
@@ -348,14 +349,14 @@ const eventHandlers = {
                   (g) => !afterList.includes(g)
                 );
                 groupsToAdd = afterList.filter((g) => !beforeList.includes(g));
-                console.log(`🔵 Detected action: MOVE`);
+                console.log(`?? Detected action: MOVE`);
               }
             } else if (actionLeder === "remove") {
               // Jika before lebih banyak dari after, ini adalah REMOVE
               actionType = "remove";
               groupsToRemove = beforeList.filter((g) => !afterList.includes(g));
               groupsToAdd = [];
-              console.log(`🔵 Detected action: REMOVE`);
+              console.log(`?? Detected action: REMOVE`);
             } else if (actionLeder === "move") {
               // Jika jumlah sama, cek apakah ada perbedaan
               const isDifferent =
@@ -369,25 +370,25 @@ const eventHandlers = {
                   (g) => !afterList.includes(g)
                 );
                 groupsToAdd = afterList.filter((g) => !beforeList.includes(g));
-                console.log(`🔵 Detected action: MOVE`);
+                console.log(`?? Detected action: MOVE`);
               } else {
                 // Tidak ada perubahan
                 actionType = "no-change";
-                console.log(`🔵 No changes detected`);
+                console.log(`?? No changes detected`);
               }
             }
 
             console.log(
-              `➕ Groups to ADD: ${groupsToAdd.join(", ") || "none"}`
+              `? Groups to ADD: ${groupsToAdd.join(", ") || "none"}`
             );
             console.log(
-              `🗑️ Groups to REMOVE: ${groupsToRemove.join(", ") || "none"}`
+              `??? Groups to REMOVE: ${groupsToRemove.join(", ") || "none"}`
             );
 
             // Siapkan operasi DELETE (hanya untuk yang perlu dihapus)
             for (const g of groupsToRemove) {
-              if (g === "PKL" || g === "mirorim") {
-                console.log(`⏭️ Skipping PKL/mirorim removal for ${g}`);
+              if (g === "PKL" || g === "mirorim" || g === 'Internship') {
+                console.log(`?? Skipping PKL/mirorim removal for ${g}`);
                 continue;
               }
               if (currentGroupNames.includes(g)) {
@@ -410,7 +411,7 @@ const eventHandlers = {
                   userDN: userDN,
                 });
               } else {
-                console.log(`ℹ️ User sudah berada di group ${g} (skip POST)`);
+                console.log(`?? User sudah berada di group ${g} (skip POST)`);
               }
             }
 
@@ -442,7 +443,7 @@ const eventHandlers = {
           // Step 2: Proses yang REJECT - hanya catat di action array (TIDAK update LDAP)
           for (const apr of rejectedMembers) {
             console.log(
-              `\n❌ Processing REJECT for user: ${apr.user} - Skip LDAP operations`
+              `\n? Processing REJECT for user: ${apr.user} - Skip LDAP operations`
             );
 
             const beforeList = (apr.before_ || "")
@@ -469,12 +470,12 @@ const eventHandlers = {
           // Step 3: Eksekusi LDAP operations (hanya untuk yang approve)
           if (ldapOperations.length > 0) {
             console.log(
-              `\n📋 Total ${ldapOperations.length} operasi LDAP siap dieksekusi...`
+              `\n?? Total ${ldapOperations.length} operasi LDAP siap dieksekusi...`
             );
 
             for (const op of ldapOperations) {
               if (op.type === "delete") {
-                console.log(`🗑️ Removing ${op.user} from group: ${op.group}`);
+                console.log(`??? Removing ${op.user} from group: ${op.group}`);
                 await axios.delete(
                   `${LDAP_API_MANAGE}/groups/${op.group}/memberuid`,
                   {
@@ -482,20 +483,20 @@ const eventHandlers = {
                     headers: { "Content-Type": "application/json" },
                   }
                 );
-                console.log(`✅ Removed from ${op.group}`);
+                console.log(`? Removed from ${op.group}`);
               } else if (op.type === "post") {
-                console.log(`➕ Adding ${op.user} to group: ${op.group}`);
+                console.log(`? Adding ${op.user} to group: ${op.group}`);
                 await axios.post(
                   `${LDAP_API_MANAGE}/groups/${op.group}/memberuid`,
                   { memberUid: op.userDN },
                   { headers: { "Content-Type": "application/json" } }
                 );
-                console.log(`✅ Added to ${op.group}`);
+                console.log(`? Added to ${op.group}`);
               }
             }
           } else {
             console.log(
-              "\nℹ️ Tidak ada operasi LDAP (semua reject atau tidak ada perubahan)"
+              "\n?? Tidak ada operasi LDAP (semua reject atau tidak ada perubahan)"
             );
           }
 
@@ -510,7 +511,7 @@ const eventHandlers = {
             globalStatus = "Reject";
           }
 
-          console.log(`\n📊 Global Status: ${globalStatus}`);
+          console.log(`\n?? Global Status: ${globalStatus}`);
 
           // Step 5: Update GraphQL dengan action array lengkap (approve + reject)
           const now = new Date();
@@ -541,11 +542,11 @@ const eventHandlers = {
             query: [],
           };
 
-          console.log("📊 Action Array:", JSON.stringify(actionArray, null, 2));
+          console.log("?? Action Array:", JSON.stringify(actionArray, null, 2));
 
           const responseQuery = await configureQuery(fastify, dataQuery);
           console.log(
-            "✅ Response GraphQL Update Alokasi Resource:",
+            "? Response GraphQL Update Alokasi Resource:",
             JSON.stringify(responseQuery, null, 2)
           );
 
@@ -573,7 +574,7 @@ const eventHandlers = {
           };
 
           console.log(
-            "📊 Action Log for Camunda (Manual):",
+            "?? Action Log for Camunda (Manual):",
             JSON.stringify(actionLogForCamunda, null, 2)
           );
 
@@ -582,14 +583,14 @@ const eventHandlers = {
             instanceId,
             process
           );
-          console.log("✅ Response Camunda:", responseCamunda);
+          console.log("? Response Camunda:", responseCamunda);
 
           results.push({
             proc_inst_id: responseCamunda.data.id,
           });
         } catch (error) {
           console.error(
-            `❌ Error executing handler for event: approvalAlokasi`,
+            `? Error executing handler for event: approvalAlokasi`,
             error
           );
           console.error(
@@ -597,7 +598,7 @@ const eventHandlers = {
             error.response?.data || error.message
           );
           console.error(
-            "⚠️ Rollback otomatis - tidak ada perubahan yang diterapkan"
+            "?? Rollback otomatis - tidak ada perubahan yang diterapkan"
           );
           throw error;
         }
